@@ -83,21 +83,21 @@ public class CompanionManager {
             ServerLevel world = this._player.serverLevel();
             if (this._despawnedCompanionData.containsKey(character.name())) {
                 LOGGER.info("ensureCompanionExists DESPAWNED");
-                try {
-                    CompoundTag savedState = (CompoundTag) this._despawnedCompanionData.remove(character.name());
-                    AutomatoneEntity restoredCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
-                    restoredCompanion.readAdditionalSaveData(savedState);
-                    BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
-                    restoredCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
-                    world.addFreshEntity(restoredCompanion);
-                    this._companionMap.put(character.name(), restoredCompanion.getUUID());
-                    PrintStream var10000 = System.out;
-                    String var10001 = character.name();
-                    LOGGER.info("Restored companion from saved state: " + var10001 + " for player " + this._player.getName().getString());
-                }catch (Exception e){
-                    e.printStackTrace();
-                }
-                writeToNbt();
+               // try {
+               //     CompoundTag savedState = (CompoundTag) this._despawnedCompanionData.remove(character.name());
+               //     AutomatoneEntity restoredCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
+               //     restoredCompanion.readAdditionalSaveData(savedState);
+               //     BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
+               //     restoredCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
+               //     world.addFreshEntity(restoredCompanion);
+               //     this._companionMap.put(character.name(), restoredCompanion.getUUID());
+               //     PrintStream var10000 = System.out;
+               //     String var10001 = character.name();
+               //     LOGGER.info("Restored companion from saved state: " + var10001 + " for player " + this._player.getName().getString());
+               // }catch (Exception e){
+               //     e.printStackTrace();
+               // }
+               // writeToNbt();
             } else {
                 Entity existingCompanion = companionUuid != null ? world.getEntity(companionUuid) : null;
                 BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
