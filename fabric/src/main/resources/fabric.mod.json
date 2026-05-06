@@ -32,7 +32,7 @@
     "java": ">=21",
     "architectury": ">=13.0.8",
     "fabric-api": "*",
-    "playerengine": ">=1.21.1-1.1.11"
+    "playerengine": ">=1.21.1-1.1.12"
   },
   "suggests": {
     "another-mod": "*"
