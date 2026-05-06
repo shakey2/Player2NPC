@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "com.goodbird.player2npc.fabric.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MouseHandlerDebugMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
