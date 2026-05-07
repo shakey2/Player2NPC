@@ -60,6 +60,7 @@ public class PersistentDataManager {
                 server.execute(() -> {
                     try {
                         entity.getLivingInventory().readNbt(entity.level().registryAccess(), inventoryNbt);
+                        loadConversation(entity);
                         LOGGER.info("Successfully loaded per-world inventory for characterId: " + characterId);
                     } catch (Exception e) {
                         LOGGER.error("Error applying inventory for characterId: " + characterId, e);
@@ -85,6 +86,7 @@ public class PersistentDataManager {
             try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(inventoryFile))) {
                 NbtIo.write(wrapper, out);
             }
+            saveConversationNow(entity);
             LOGGER.info("Successfully saved per-world inventory for characterId: " + characterId);
         } catch (Exception e) {
             LOGGER.error("Error saving persistent data for " + entity.character.name(), e);
@@ -108,5 +110,23 @@ public class PersistentDataManager {
                 .resolve("persistentdata")
                 .resolve(characterId)
                 .resolve("inventory.dat");
+    }
+
+    private static void saveConversationNow(AutomatoneEntity entity) {
+        try {
+            if (entity == null || entity.controller == null) return;
+            entity.controller.getAIPersistantData().saveHistoryNow();
+        } catch (Exception e) {
+            LOGGER.error("Error saving conversation history for " + (entity.character == null ? "UNKNOWN" : entity.character.name()), e);
+        }
+    }
+
+    private static void loadConversation(AutomatoneEntity entity) {
+        try {
+            if (entity == null || entity.controller == null) return;
+            entity.controller.getAIPersistantData().reloadHistoryFromDisk();
+        } catch (Exception e) {
+            LOGGER.error("Error loading conversation history for " + (entity.character == null ? "UNKNOWN" : entity.character.name()), e);
+        }
     }
 }
