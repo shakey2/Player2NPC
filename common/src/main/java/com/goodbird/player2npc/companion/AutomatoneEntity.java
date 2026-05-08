@@ -244,8 +244,9 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
         return this.lastVelocity.lerp(this.getDeltaMovement(), (double)delta);
     }
 
+    @Override
     public Packet<ClientGamePacketListener> getAddEntityPacket() {
-        return AutomatonSpawnPacket.create(this);
+        return (Packet<ClientGamePacketListener>) AutomatonSpawnPacket.create(this);
     }
 
     public Component getDisplayName() {

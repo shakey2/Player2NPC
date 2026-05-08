@@ -32,8 +32,6 @@ public class Player2NPCClient {
 
     public static void onInitializeClient() {
         EntityRendererRegistry.register(Player2NPC.AUTOMATONE, RenderAutomaton::new);
-        NetworkManager.registerReceiver(NetworkManager.Side.S2C, Player2NPC.SPAWN_PACKET_ID,
-                AutomatonSpawnPacket::handle);
         // https://www.glfw.org/docs/3.3/group__keys.html
         // 72 => H
         openCharacterScreenKeybind = new KeyMapping("key.player2npc.open_character_screen", Type.KEYSYM, 72,
@@ -49,6 +47,24 @@ public class Player2NPCClient {
         KeyMappingRegistry.register(ttsEnableKeybind);
         KeyMappingRegistry.register(sttKeybind);
 
+        NetworkManager.registerReceiver(NetworkManager.Side.S2C, Player2NPC.SPAWN_PACKET_ID, (buf, context) -> {
+            AutomatonSpawnPacket packet = new AutomatonSpawnPacket(buf);
+            context.queue(() -> {
+                net.minecraft.client.multiplayer.ClientLevel world = (net.minecraft.client.multiplayer.ClientLevel) context.getPlayer().level();
+                AutomatoneEntity entity = new AutomatoneEntity(Player2NPC.AUTOMATONE.get(), world);
+                entity.setId(packet.getId());
+                entity.setUUID(packet.getUuid());
+                entity.syncPacketPositionCodec(packet.getPos().x, packet.getPos().y, packet.getPos().z);
+                entity.moveTo(packet.getPos().x, packet.getPos().y, packet.getPos().z);
+                entity.setDeltaMovement(packet.getVelocity());
+                entity.setXRot(packet.getPitch());
+                entity.setYRot(packet.getYaw());
+                entity.setCharacter(packet.getCharacter());
+                packet.getInventory().player = entity;
+                entity.inventory = packet.getInventory();
+                world.putNonPlayerEntity(packet.getId(), entity);
+            });
+        });
         ClientPlayerEvent.CLIENT_PLAYER_JOIN.register((player) -> {
             if (!ClientPersistence.getTTStatus()) {
                 player.sendSystemMessage(

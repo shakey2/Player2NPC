@@ -14,14 +14,15 @@ import dev.architectury.networking.NetworkManager;
 import io.netty.buffer.Unpooled;
 import java.util.UUID;
 
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.Level;
 
 public class AutomatonSpawnPacket {
     private final int id;
@@ -56,10 +57,10 @@ public class AutomatonSpawnPacket {
         this.inventory.readNbt(buf.readNbt().getList("inv", 10));
     }
 
-    public static Packet<ClientGamePacketListener> create(AutomatoneEntity entity) {
+    public static Packet<?> create(AutomatoneEntity entity) {
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         (new AutomatonSpawnPacket(entity)).write(buf);
-        return (Packet<ClientGamePacketListener>) NetworkManager.toPacket(NetworkManager.Side.S2C, Player2NPC.SPAWN_PACKET_ID, buf);
+        return NetworkManager.toPacket(NetworkManager.Side.S2C, Player2NPC.SPAWN_PACKET_ID, buf);
     }
 
     public void write(FriendlyByteBuf buf) {
@@ -79,22 +80,12 @@ public class AutomatonSpawnPacket {
         buf.writeNbt(compound);
     }
 
-    public static void handle(FriendlyByteBuf var3, NetworkManager.PacketContext var4) {
-        AutomatonSpawnPacket packet = new AutomatonSpawnPacket(var3);
-        var4.queue(() -> {
-            ClientLevel world = (ClientLevel) var4.getPlayer().level();
-            AutomatoneEntity entity = new AutomatoneEntity(Player2NPC.AUTOMATONE.get(), world);
-            entity.setId(packet.id);
-            entity.setUUID(packet.uuid);
-            entity.syncPacketPositionCodec(packet.pos.x, packet.pos.y, packet.pos.z);
-            entity.moveTo(packet.pos.x, packet.pos.y, packet.pos.z);
-            entity.setDeltaMovement(packet.velocity);
-            entity.setXRot(packet.pitch);
-            entity.setYRot(packet.yaw);
-            entity.setCharacter(packet.character);
-            packet.inventory.player = entity;
-            entity.inventory = packet.inventory;
-            world.putNonPlayerEntity(packet.id, entity);
-        });
-    }
+    public LivingEntityInventory getInventory() { return inventory; }
+    public Character getCharacter() { return character; }
+    public int getId() { return id; }
+    public UUID getUuid() { return uuid; }
+    public Vec3 getPos() { return pos; }
+    public Vec3 getVelocity() { return velocity; }
+    public float getPitch() { return pitch; }
+    public float getYaw() { return yaw; }
 }
