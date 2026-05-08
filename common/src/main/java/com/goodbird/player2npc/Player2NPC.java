@@ -54,6 +54,9 @@ public class Player2NPC {
         LOGGER.info("INIT");
         ENTITY_TYPES.register();
         EntityAttributeRegistry.register(AUTOMATONE, Zombie::createAttributes);
+        if (dev.architectury.platform.Platform.getEnvironment() == dev.architectury.utils.Env.SERVER) {
+            NetworkManager.registerS2CPayloadType(SPAWN_PACKET_ID);
+        }
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, SPAWN_REQUEST_PACKET_ID, AutomatoneSpawnRequestPacket::handle);
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, DESPAWN_REQUEST_PACKET_ID, AutomatoneDespawnRequestPacket::handle);
 

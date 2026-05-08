@@ -260,7 +260,7 @@ public class AutomatoneEntity extends LivingEntity
 
     @Override
     public Packet<ClientGamePacketListener> getAddEntityPacket(ServerEntity serverEntity) {
-        return AutomatonSpawnPacket.create(level().registryAccess(), this);
+        return (Packet<ClientGamePacketListener>) AutomatonSpawnPacket.create(level().registryAccess(), this);
     }
 
     public Component getDisplayName() {
