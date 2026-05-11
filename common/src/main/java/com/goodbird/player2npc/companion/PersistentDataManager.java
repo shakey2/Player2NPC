@@ -17,9 +17,7 @@ import org.apache.logging.log4j.Logger;
 public class PersistentDataManager {
     private static final Logger LOGGER = LogManager.getLogger();
 
-    /**
-     * Serializes the entity's inventory to NBT and saves it to a per-world file keyed by character ID.
-     */
+    /** Serializes the entity inventory to per-world storage under player2npc/persistentdata/entityUuid/characterId/. */
     public static void saveInventory(AutomatoneEntity entity) {
         if (entity.character == null || entity.level().isClientSide) return;
 
@@ -27,18 +25,19 @@ public class PersistentDataManager {
             try {
                 String characterId = getCharacterIdOrNull(entity);
                 if (characterId == null) return;
-                Path inventoryFile = getInventoryFile(entity, characterId);
-                
+                Path inventoryFile = getInventoryFileForSave(entity, characterId);
+
                 ListTag inventoryNbt = entity.getLivingInventory().writeNbt(new ListTag());
                 CompoundTag wrapper = new CompoundTag();
                 wrapper.put("Inventory", inventoryNbt);
-                
+
                 Files.createDirectories(inventoryFile.getParent());
                 try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(inventoryFile))) {
                     NbtIo.write(wrapper, out);
                 }
                 saveConversationNow(entity);
-                LOGGER.info("Successfully saved per-world inventory for characterId: " + characterId);
+                LOGGER.info("Saved per-world inventory entityUuid={} characterId={}",
+                        entity.getUUID(), characterId);
             } catch (Exception e) {
                 LOGGER.error("Error saving persistent data for " + entity.character.name(), e);
             }
@@ -46,7 +45,7 @@ public class PersistentDataManager {
     }
 
     /**
-     * Loads the serialized inventory NBT from a per-world file keyed by character ID and applies it.
+     * Loads inventory from the UUID-scoped path, or from the legacy characterId-only path if present.
      */
     public static void loadInventory(AutomatoneEntity entity) {
         if (entity.character == null || entity.level().isClientSide) return;
@@ -55,8 +54,8 @@ public class PersistentDataManager {
             try {
                 String characterId = getCharacterIdOrNull(entity);
                 if (characterId == null) return;
-                Path inventoryFile = getInventoryFile(entity, characterId);
-                if (!Files.exists(inventoryFile)) return;
+                Path inventoryFile = resolveInventoryFileForLoad(entity, characterId);
+                if (inventoryFile == null || !Files.exists(inventoryFile)) return;
 
                 CompoundTag wrapper;
                 try (DataInputStream in = new DataInputStream(Files.newInputStream(inventoryFile))) {
@@ -70,7 +69,8 @@ public class PersistentDataManager {
                     try {
                         entity.getLivingInventory().readNbt(inventoryNbt);
                         loadConversation(entity);
-                        LOGGER.info("Successfully loaded per-world inventory for characterId: " + characterId);
+                        LOGGER.info("Loaded per-world inventory entityUuid={} characterId={} from={}",
+                                entity.getUUID(), characterId, inventoryFile);
                     } catch (Exception e) {
                         LOGGER.error("Error applying inventory for characterId: " + characterId, e);
                     }
@@ -90,14 +90,42 @@ public class PersistentDataManager {
         return characterId;
     }
 
-    private static Path getInventoryFile(AutomatoneEntity entity, String characterId) {
+    private static Path getWorldRoot(AutomatoneEntity entity) {
         MinecraftServer server = Objects.requireNonNull(entity.level().getServer(), "server");
-        Path worldRoot = server.getWorldPath(LevelResource.ROOT);
+        return server.getWorldPath(LevelResource.ROOT);
+    }
+
+    /** Current layout: persistentdata / entityUuid / characterId / inventory.dat */
+    private static Path getInventoryFileForSave(AutomatoneEntity entity, String characterId) {
+        Path worldRoot = getWorldRoot(entity);
+        return worldRoot
+                .resolve("player2npc")
+                .resolve("persistentdata")
+                .resolve(entity.getUUID().toString())
+                .resolve(characterId)
+                .resolve("inventory.dat");
+    }
+
+    /** Legacy: persistentdata / characterId / inventory.dat */
+    private static Path getLegacyInventoryFile(Path worldRoot, String characterId) {
         return worldRoot
                 .resolve("player2npc")
                 .resolve("persistentdata")
                 .resolve(characterId)
                 .resolve("inventory.dat");
+    }
+
+    private static Path resolveInventoryFileForLoad(AutomatoneEntity entity, String characterId) {
+        Path worldRoot = getWorldRoot(entity);
+        Path primary = getInventoryFileForSave(entity, characterId);
+        if (Files.exists(primary)) {
+            return primary;
+        }
+        Path legacy = getLegacyInventoryFile(worldRoot, characterId);
+        if (Files.exists(legacy)) {
+            return legacy;
+        }
+        return null;
     }
 
     private static void saveConversationNow(AutomatoneEntity entity) {
