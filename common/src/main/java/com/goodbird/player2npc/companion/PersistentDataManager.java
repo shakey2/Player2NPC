@@ -43,9 +43,10 @@ public class PersistentDataManager {
             try {
                 String characterId = getCharacterIdOrNull(entity);
                 if (characterId == null) return;
-                Path inventoryFile = getInventoryFile(entity, characterId);
-                if (!Files.exists(inventoryFile)) {
-                    LOGGER.info("No per-world inventory file found for characterId: {}", characterId);
+                Path inventoryFile = resolveInventoryFileForLoad(entity, characterId);
+                if (inventoryFile == null || !Files.exists(inventoryFile)) {
+                    LOGGER.info("No per-world inventory file for entityUuid={} characterId={}",
+                            entity.getUUID(), characterId);
                     return;
                 }
 
@@ -61,7 +62,8 @@ public class PersistentDataManager {
                     try {
                         entity.getLivingInventory().readNbt(entity.level().registryAccess(), inventoryNbt);
                         loadConversation(entity);
-                        LOGGER.info("Successfully loaded per-world inventory for characterId: " + characterId);
+                        LOGGER.info("Loaded per-world inventory entityUuid={} characterId={} from={}",
+                                entity.getUUID(), characterId, inventoryFile);
                     } catch (Exception e) {
                         LOGGER.error("Error applying inventory for characterId: " + characterId, e);
                     }
@@ -76,7 +78,7 @@ public class PersistentDataManager {
         try {
             String characterId = getCharacterIdOrNull(entity);
             if (characterId == null) return;
-            Path inventoryFile = getInventoryFile(entity, characterId);
+            Path inventoryFile = getInventoryFileForSave(entity, characterId);
 
             ListTag inventoryNbt = entity.getLivingInventory().writeNbt(entity.level().registryAccess(), new ListTag());
             CompoundTag wrapper = new CompoundTag();
@@ -87,7 +89,8 @@ public class PersistentDataManager {
                 NbtIo.write(wrapper, out);
             }
             saveConversationNow(entity);
-            LOGGER.info("Successfully saved per-world inventory for characterId: " + characterId);
+            LOGGER.info("Saved per-world inventory entityUuid={} characterId={}",
+                    entity.getUUID(), characterId);
         } catch (Exception e) {
             LOGGER.error("Error saving persistent data for " + entity.character.name(), e);
         }
@@ -102,14 +105,40 @@ public class PersistentDataManager {
         return characterId;
     }
 
-    private static Path getInventoryFile(AutomatoneEntity entity, String characterId) {
+    private static Path getWorldRoot(AutomatoneEntity entity) {
         MinecraftServer server = Objects.requireNonNull(entity.level().getServer(), "server");
-        Path worldRoot = server.getWorldPath(LevelResource.ROOT);
+        return server.getWorldPath(LevelResource.ROOT);
+    }
+
+    private static Path getInventoryFileForSave(AutomatoneEntity entity, String characterId) {
+        Path worldRoot = getWorldRoot(entity);
+        return worldRoot
+                .resolve("player2npc")
+                .resolve("persistentdata")
+                .resolve(entity.getUUID().toString())
+                .resolve(characterId)
+                .resolve("inventory.dat");
+    }
+
+    private static Path getLegacyInventoryFile(Path worldRoot, String characterId) {
         return worldRoot
                 .resolve("player2npc")
                 .resolve("persistentdata")
                 .resolve(characterId)
                 .resolve("inventory.dat");
+    }
+
+    private static Path resolveInventoryFileForLoad(AutomatoneEntity entity, String characterId) {
+        Path worldRoot = getWorldRoot(entity);
+        Path primary = getInventoryFileForSave(entity, characterId);
+        if (Files.exists(primary)) {
+            return primary;
+        }
+        Path legacy = getLegacyInventoryFile(worldRoot, characterId);
+        if (Files.exists(legacy)) {
+            return legacy;
+        }
+        return null;
     }
 
     private static void saveConversationNow(AutomatoneEntity entity) {
