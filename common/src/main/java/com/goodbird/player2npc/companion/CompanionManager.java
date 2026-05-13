@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,11 +22,18 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 public class CompanionManager {
+
+    public enum SummonIntent {
+        TELEPORT_ALIVE,
+        RESTORE_DESPAWNED,
+        CREATE_NEW
+    }
     private static final Logger LOGGER = LogManager.getLogger();
     private final ServerPlayer _player;
     private final Map<String, UUID> _companionMap = new ConcurrentHashMap();
@@ -38,16 +46,16 @@ public class CompanionManager {
         this._player = player;
     }
 
-    public static CompanionManager get(ServerPlayer player){
-        return cache.computeIfAbsent(player.getName().getString(), (name)-> {
+    public static CompanionManager get(ServerPlayer player) {
+        return cache.computeIfAbsent(player.getUUID().toString(), (k) -> {
             CompanionManager manager = new CompanionManager(player);
             manager.readFromNbt();
             return manager;
         });
     }
 
-    public static void remove(ServerPlayer player){
-        cache.remove(player.getName().getString());
+    public static void remove(ServerPlayer player) {
+        cache.remove(player.getUUID().toString());
     }
 
     public void summonAllCompanionsAsync() {
@@ -55,8 +63,36 @@ public class CompanionManager {
         CompletableFuture.supplyAsync(() -> CharacterUtils.requestCharacters(this._player, "player2-ai-npc-minecraft")).thenAcceptAsync((characters) -> this._assignedCharacters = new ArrayList(Arrays.asList(characters)), this._player.getServer());
     }
 
+    public SummonIntent classifySummon(Character character) {
+        if (character == null) {
+            return SummonIntent.CREATE_NEW;
+        }
+        String name = character.name();
+        if (this._despawnedCompanionData.containsKey(name)) {
+            return SummonIntent.RESTORE_DESPAWNED;
+        }
+        UUID companionUuid = this._companionMap.get(name);
+        if (companionUuid == null) {
+            return SummonIntent.CREATE_NEW;
+        }
+        Entity existingCompanion = null;
+        if (this._player.getServer() != null) {
+            for (ServerLevel w : this._player.getServer().getAllLevels()) {
+                existingCompanion = w.getEntity(companionUuid);
+                if (existingCompanion != null) {
+                    break;
+                }
+            }
+        }
+        if (existingCompanion instanceof AutomatoneEntity && existingCompanion.isAlive()) {
+            return SummonIntent.TELEPORT_ALIVE;
+        }
+        return SummonIntent.CREATE_NEW;
+    }
+
     private void summonCompanions() {
         if (!this._assignedCharacters.isEmpty()) {
+            this._assignedCharacters = CompanionSpawnPolicy.filterForJoin(this._player, this._assignedCharacters, this);
             List<String> assignedNames = this._assignedCharacters.stream().map((c) -> c.name()).toList();
             List<String> toDismiss = new ArrayList();
             this._companionMap.forEach((name, uuid) -> {
@@ -77,6 +113,11 @@ public class CompanionManager {
 
     public void ensureCompanionExists(Character character) {
         LOGGER.info("ensureCompanionExists for character={}", character);
+        Optional<Component> deny = CompanionSpawnPolicy.denial(this._player, character, this);
+        if (deny.isPresent()) {
+            this._player.sendSystemMessage(deny.get());
+            return;
+        }
         if (this._player.level() != null && this._player.getServer() != null) {
             LOGGER.info("ensureCompanionExists NOTNULL");
             UUID companionUuid = (UUID)this._companionMap.get(character.name());
@@ -152,6 +193,16 @@ public class CompanionManager {
         List<String> names = new ArrayList(this._companionMap.keySet());
         names.forEach(this::dismissCompanion);
         this._companionMap.clear();
+    }
+
+    /** Removes companion map and despawned snapshot entries without spawning discard logic (used when purging storage). */
+    public void removeCompanionMapping(String characterName) {
+        if (characterName == null) {
+            return;
+        }
+        this._companionMap.remove(characterName);
+        this._despawnedCompanionData.remove(characterName);
+        writeToNbt();
     }
 
     public List<AutomatoneEntity> getActiveCompanions() {
