@@ -24,8 +24,14 @@ public final class CharacterStorageCommands {
     private CharacterStorageCommands() {
     }
 
+    /**
+     * Registers {@code /player2npc} (level 0). Bot and user blacklists live here, not under {@code /playerengine}
+     * (PlayerEngine's {@code playerengine} root requires level 2).
+     */
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("player2npc").requires(s -> s.hasPermission(0))
+                .then(BotBlacklistCommands.branch())
+                .then(UserBlacklistCommands.branch())
                 .then(Commands.literal("storage")
                         .then(Commands.literal("delete")
                                 .then(Commands.literal("id").then(Commands.argument("id", StringArgumentType.greedyString())

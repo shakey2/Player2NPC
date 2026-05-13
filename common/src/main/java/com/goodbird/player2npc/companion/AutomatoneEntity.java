@@ -26,8 +26,12 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+
+import java.util.UUID;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
@@ -118,6 +122,18 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
             ConversationManager.sendGreeting(this.controller, this.character);
         }
 
+        // Restore controller owner from persisted UUID when possible. Owner may be offline; if so,
+        // leave unset and CompanionManager.ensureCompanionExists (teleport branch) reattaches when they rejoin.
+        if (!this.level().isClientSide && this.controller != null && tag.hasUUID("owner_uuid")) {
+            UUID ownerUuid = tag.getUUID("owner_uuid");
+            MinecraftServer srv = this.level().getServer();
+            if (srv != null) {
+                ServerPlayer ownerPlayer = srv.getPlayerList().getPlayer(ownerUuid);
+                if (ownerPlayer != null) {
+                    this.controller.setOwner(ownerPlayer);
+                }
+            }
+        }
     }
 
     public void addAdditionalSaveData(CompoundTag tag) {
@@ -131,6 +147,20 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
             tag.put("character", compound);
         }
 
+        if (this.controller != null && this.controller.getOwner() != null) {
+            tag.putUUID("owner_uuid", this.controller.getOwner().getUUID());
+        }
+    }
+
+    /**
+     * Re-binds the controller's owner. Used by CompanionManager when an existing companion
+     * is teleported back to a rejoining player, since teleport doesn't go through the spawn
+     * constructor that originally sets the owner.
+     */
+    public void reattachOwner(Player newOwner) {
+        if (newOwner != null && this.controller != null) {
+            this.controller.setOwner(newOwner);
+        }
     }
 
     public void tick() {

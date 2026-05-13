@@ -28,6 +28,25 @@ public final class OwnerCharacterStoragePaths {
         return persistentDataRoot(worldRoot).resolve("owners");
     }
 
+    public static final String BOT_BLACKLIST_FILE_NAME = "botblacklist.json";
+
+    public static final String USER_BLACKLIST_FILE_NAME = "userblacklist.json";
+
+    /** Server-wide username index; not under {@code owners/}. */
+    public static final String SERVER_USERNAME_UUID_CACHE_FILE_NAME = "server_username_uuid_cache.json";
+
+    public static Path botBlacklistFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(BOT_BLACKLIST_FILE_NAME);
+    }
+
+    public static Path userBlacklistFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(USER_BLACKLIST_FILE_NAME);
+    }
+
+    public static Path serverUsernameUuidCacheFile(Path worldRoot) {
+        return persistentDataRoot(worldRoot).resolve(SERVER_USERNAME_UUID_CACHE_FILE_NAME);
+    }
+
     public static Path ownerCharacterDir(Path worldRoot, UUID ownerUuid, String characterId) {
         return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(characterId);
     }
