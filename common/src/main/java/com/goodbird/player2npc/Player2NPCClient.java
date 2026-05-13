@@ -20,7 +20,6 @@ import dev.architectury.registry.client.level.entity.EntityRendererRegistry;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.network.chat.Component;
 import com.goodbird.player2npc.companion.AutomatoneEntity;
-import com.goodbird.player2npc.debug.AgentDebugLogCommon;
 import com.player2.playerengine.player2api.utils.STTUtils;
 
 public class Player2NPCClient {
@@ -28,7 +27,6 @@ public class Player2NPCClient {
     private static KeyMapping ttsEnableKeybind;
     private static KeyMapping sttKeybind;
     private static long lastHeartbeatTime = System.nanoTime();
-    private static int agentArchitectPostTicks;
 
     public Player2NPCClient() {
     }
@@ -79,45 +77,18 @@ public class Player2NPCClient {
 
         });
         ClientTickEvent.CLIENT_POST.register((client) -> {
-            // #region agent log
-            try {
-                agentArchitectPostTicks++;
-                if (agentArchitectPostTicks % 40 == 1) {
-                    String screenName = client.screen == null ? "null" : client.screen.getClass().getName();
-                    AgentDebugLogCommon.log("H1", "Player2NPCClient.CLIENT_POST", "architect_post_tick",
-                            String.format("{\"tickSeq\":%d,\"screen\":\"%s\",\"levelNull\":%b,\"playerNull\":%b}",
-                                    agentArchitectPostTicks,
-                                    screenName.replace("\\", "\\\\").replace("\"", "\\\""),
-                                    client.level == null,
-                                    client.player == null));
-                }
-            } catch (Throwable t) {
-                AgentDebugLogCommon.log("H1", "Player2NPCClient.CLIENT_POST", "architect_post_tick_log_failed",
-                        String.format("{\"error\":\"%s\"}", String.valueOf(t).replace("\"", "\\\"")));
+            if (openCharacterScreenKeybind.consumeClick() && client.level != null) {
+                client.setScreen(new CharacterSelectionScreen());
             }
-            // #endregion
-            try {
-                if (openCharacterScreenKeybind.consumeClick() && client.level != null) {
-                    client.setScreen(new CharacterSelectionScreen());
-                }
-                if (ttsEnableKeybind.consumeClick()) {
-                    PlayerEngineClient.enabledTTS = !PlayerEngineClient.enabledTTS;
-                    client.player.sendSystemMessage(
-                            Component.literal(PlayerEngineClient.enabledTTS ? "Enabled TTS" : "Disabled TTS"));
-                }
-                if (sttKeybind.isDown()) {
-                    STTUtils.setIsListening(true, AutomatoneEntity.PLAYER2_GAME_ID);
-                } else {
-                    STTUtils.setIsListening(false, AutomatoneEntity.PLAYER2_GAME_ID);
-                }
-            } catch (Throwable t) {
-                // #region agent log
-                AgentDebugLogCommon.log("H3", "Player2NPCClient.CLIENT_POST", "throwable_in_post_handler",
-                        String.format("{\"class\":\"%s\",\"message\":\"%s\"}",
-                                t.getClass().getName().replace("\"", "\\\""),
-                                String.valueOf(t.getMessage()).replace("\"", "\\\"")));
-                // #endregion
-                throw t;
+            if (ttsEnableKeybind.consumeClick()) {
+                PlayerEngineClient.enabledTTS = !PlayerEngineClient.enabledTTS;
+                client.player.sendSystemMessage(
+                        Component.literal(PlayerEngineClient.enabledTTS ? "Enabled TTS" : "Disabled TTS"));
+            }
+            if (sttKeybind.isDown()) {
+                STTUtils.setIsListening(true, AutomatoneEntity.PLAYER2_GAME_ID);
+            } else {
+                STTUtils.setIsListening(false, AutomatoneEntity.PLAYER2_GAME_ID);
             }
         });
         ClientTickEvent.CLIENT_PRE.register((client) -> {

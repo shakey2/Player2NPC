@@ -131,8 +131,16 @@ public final class CharacterStorageOperations {
 
     public static void deleteAllCharacterData(MinecraftServer server, UUID ownerUuid) throws IOException {
         Path d = ownerDir(server, ownerUuid);
-        if (Files.isDirectory(d)) {
-            deleteDirectoryRecursive(d);
+        if (!Files.isDirectory(d)) {
+            return;
+        }
+        // Delete only per-character subdirectories; preserve owner-root files such as botblacklist.json and userblacklist.json.
+        try (Stream<Path> stream = Files.list(d)) {
+            for (Path child : stream.toList()) {
+                if (Files.isDirectory(child)) {
+                    deleteDirectoryRecursive(child);
+                }
+            }
         }
     }
 

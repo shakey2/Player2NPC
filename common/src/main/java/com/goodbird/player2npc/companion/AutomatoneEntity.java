@@ -26,10 +26,13 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
+
+import java.util.UUID;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -123,6 +126,18 @@ public class AutomatoneEntity extends LivingEntity
             ConversationManager.sendGreeting(this.controller, this.character);
         }
 
+        // Restore controller owner from persisted UUID when possible. Owner may be offline; if so,
+        // leave unset and CompanionManager.ensureCompanionExists (teleport branch) reattaches when they rejoin.
+        if (!this.level().isClientSide && this.controller != null && tag.hasUUID("owner_uuid")) {
+            UUID ownerUuid = tag.getUUID("owner_uuid");
+            MinecraftServer srv = this.level().getServer();
+            if (srv != null) {
+                ServerPlayer ownerPlayer = srv.getPlayerList().getPlayer(ownerUuid);
+                if (ownerPlayer != null) {
+                    this.controller.setOwner(ownerPlayer);
+                }
+            }
+        }
     }
 
     public void addAdditionalSaveData(CompoundTag tag) {
@@ -136,6 +151,20 @@ public class AutomatoneEntity extends LivingEntity
             tag.put("character", compound);
         }
 
+        if (this.controller != null && this.controller.getOwner() != null) {
+            tag.putUUID("owner_uuid", this.controller.getOwner().getUUID());
+        }
+    }
+
+    /**
+     * Re-binds the controller's owner. Used by CompanionManager when an existing companion
+     * is teleported back to a rejoining player, since teleport doesn't go through the spawn
+     * constructor that originally sets the owner.
+     */
+    public void reattachOwner(Player newOwner) {
+        if (newOwner != null && this.controller != null) {
+            this.controller.setOwner(newOwner);
+        }
     }
 
     public void tick() {
@@ -289,10 +318,16 @@ public class AutomatoneEntity extends LivingEntity
                 this.controller.stop();
             }
             ConversationManager.despwnCompanion(this.getUUID());
-            controller.getOwner()
-                    .sendSystemMessage(Component.literal("Your companion " + character.shortName() + " died!"));
-            controller.getOwner().sendSystemMessage(Component.literal("It was respawned near you!"));
-            CompanionManager.get((ServerPlayer) controller.getOwner()).spawnCompanion(character);
+
+            // Owner may be null (e.g. world reload before any player rejoined). Skip notification
+            // + auto-respawn when we have no live owner to attach the new companion to.
+            Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
+            if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
+                ownerSp.sendSystemMessage(
+                        Component.literal("Your companion " + this.character.shortName() + " died!"));
+                ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
+                CompanionManager.get(ownerSp).spawnCompanion(this.character);
+            }
         }
     }
 }
