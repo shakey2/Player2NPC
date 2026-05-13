@@ -64,6 +64,10 @@ public class AutomatoneEntity extends LivingEntity
     }
 
     public void init() {
+        init(null);
+    }
+
+    public void init(Player companionOwner) {
         // this.setMaxUpStep(0.6F);
         this.setSpeed(0.4F);
         this.manager = new LivingEntityInteractionManager(this);
@@ -72,6 +76,9 @@ public class AutomatoneEntity extends LivingEntity
         if (!this.level().isClientSide && this.character != null) {
             this.controller = new PlayerEngineController((IBaritone) IBaritone.KEY.get(this), this.character,
                     "player2-ai-npc-minecraft");
+            if (companionOwner != null) {
+                this.controller.setOwner(companionOwner);
+            }
             ConversationManager.sendGreeting(this.controller, this.character);
             PersistentDataManager.loadInventory(this);
         }
@@ -81,8 +88,7 @@ public class AutomatoneEntity extends LivingEntity
     public AutomatoneEntity(Level world, Character character, Player owner) {
         super(Player2NPC.AUTOMATONE.get(), world);
         this.setCharacter(character);
-        this.init();
-        this.controller.setOwner(owner);
+        this.init(owner);
     }
 
     public LivingEntityInventory getLivingInventory() {

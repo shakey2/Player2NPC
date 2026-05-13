@@ -11,6 +11,8 @@ import com.goodbird.player2npc.network.AutomatoneDespawnRequestPacket;
 import com.goodbird.player2npc.network.AutomatoneSpawnRequestPacket;
 import com.player2.playerengine.PlayerEngineController;
 import com.player2.playerengine.player2api.auth.AuthenticationManager;
+import com.goodbird.player2npc.companion.CharacterStorageCommands;
+import dev.architectury.event.events.common.CommandRegistrationEvent;
 import dev.architectury.event.events.common.PlayerEvent;
 import dev.architectury.event.events.common.TickEvent;
 import dev.architectury.networking.NetworkManager;
@@ -59,6 +61,8 @@ public class Player2NPC {
         }
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, SPAWN_REQUEST_PACKET_ID, AutomatoneSpawnRequestPacket::handle);
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, DESPAWN_REQUEST_PACKET_ID, AutomatoneDespawnRequestPacket::handle);
+
+        CommandRegistrationEvent.EVENT.register((dispatcher, registry, environment) -> CharacterStorageCommands.register(dispatcher));
 
         PlayerEvent.PLAYER_JOIN.register((player) -> CompletableFuture
                 .runAsync(() -> AuthenticationManager.getInstance().checkAuth(player, AutomatoneEntity.PLAYER2_GAME_ID))
