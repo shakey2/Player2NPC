@@ -31,7 +31,10 @@ public final class CharacterStorageCommands {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("player2npc").requires(s -> s.hasPermission(0))
                 .then(BotBlacklistCommands.branch())
+                .then(BotWhitelistCommands.branch())
                 .then(UserBlacklistCommands.branch())
+                .then(UserWhitelistCommands.branch())
+                .then(UserSettingsCommands.branch())
                 .then(Commands.literal("storage")
                         .then(Commands.literal("delete")
                                 .then(Commands.literal("id").then(Commands.argument("id", StringArgumentType.greedyString())
