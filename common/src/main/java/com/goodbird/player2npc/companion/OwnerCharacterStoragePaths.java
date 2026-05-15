@@ -32,6 +32,13 @@ public final class OwnerCharacterStoragePaths {
 
     public static final String USER_BLACKLIST_FILE_NAME = "userblacklist.json";
 
+    public static final String BOT_WHITELIST_FILE_NAME = "botwhitelist.json";
+
+    public static final String USER_WHITELIST_FILE_NAME = "userwhitelist.json";
+
+    /** Owner preferences (list modes, future keys). */
+    public static final String USER_SETTINGS_FILE_NAME = "user-settings.json";
+
     /** Server-wide username index; not under {@code owners/}. */
     public static final String SERVER_USERNAME_UUID_CACHE_FILE_NAME = "server_username_uuid_cache.json";
 
@@ -41,6 +48,18 @@ public final class OwnerCharacterStoragePaths {
 
     public static Path userBlacklistFile(Path worldRoot, UUID ownerUuid) {
         return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(USER_BLACKLIST_FILE_NAME);
+    }
+
+    public static Path botWhitelistFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(BOT_WHITELIST_FILE_NAME);
+    }
+
+    public static Path userWhitelistFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(USER_WHITELIST_FILE_NAME);
+    }
+
+    public static Path userSettingsFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(USER_SETTINGS_FILE_NAME);
     }
 
     public static Path serverUsernameUuidCacheFile(Path worldRoot) {
