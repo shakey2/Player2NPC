@@ -1,0 +1,206 @@
+package com.goodbird.player2npc.companion;
+
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.player2.playerengine.executor.BudgetTracker;
+import com.player2.playerengine.player2api.JoulesCache;
+import com.player2.playerengine.player2api.PlayerBudgetConfigHolder;
+import com.player2.playerengine.player2api.config.PlayerBudgetConfig;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+
+import java.util.Optional;
+
+/**
+ * Per-player budget sub-commands under {@code /player2npc budget} (permission 0).
+ *
+ * <p>Each sub-command reads/writes the executing player's {@link PlayerBudgetConfig} stored at
+ * {@code player2npc/persistentdata/owners/<uuid>/player-budget.json}.
+ *
+ * <p>These settings apply only when {@code payerMode = PROMPTER_PAYS}. Server-global budget limits
+ * for {@code OWNER_PAYS_ALL} mode are managed by OPs via {@code /playerengine player2 budget}.
+ */
+public final class BudgetCommands {
+
+    private BudgetCommands() {
+    }
+
+    public static LiteralArgumentBuilder<CommandSourceStack> branch() {
+        return Commands.literal("budget")
+                .then(Commands.literal("soft")
+                        .then(Commands.argument("calls", IntegerArgumentType.integer(0))
+                                .executes(ctx -> setSoft(ctx, IntegerArgumentType.getInteger(ctx, "calls")))))
+                .then(Commands.literal("hard")
+                        .then(Commands.argument("calls", IntegerArgumentType.integer(0))
+                                .executes(ctx -> setHard(ctx, IntegerArgumentType.getInteger(ctx, "calls")))))
+                .then(Commands.literal("window")
+                        .then(Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
+                                .executes(ctx -> setWindow(ctx, IntegerArgumentType.getInteger(ctx, "minutes")))))
+                .then(Commands.literal("joules_soft")
+                        .then(Commands.argument("joules", IntegerArgumentType.integer(0))
+                                .executes(ctx -> setJoulesSoft(ctx, IntegerArgumentType.getInteger(ctx, "joules")))))
+                .then(Commands.literal("joules_hard")
+                        .then(Commands.argument("joules", IntegerArgumentType.integer(0))
+                                .executes(ctx -> setJoulesHard(ctx, IntegerArgumentType.getInteger(ctx, "joules")))))
+                .then(Commands.literal("joules_refresh")
+                        .then(Commands.argument("seconds", IntegerArgumentType.integer(60, 86400))
+                                .executes(ctx -> setJoulesRefresh(ctx, IntegerArgumentType.getInteger(ctx, "seconds")))))
+                .then(Commands.literal("reset").executes(BudgetCommands::reset))
+                .then(Commands.literal("status").executes(BudgetCommands::status));
+    }
+
+    private static ServerPlayer requirePlayer(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return ctx.getSource().getPlayerOrException();
+    }
+
+    private static int setSoft(CommandContext<CommandSourceStack> ctx, int calls) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setSoftBudgetCallsPerWindow(calls);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        String msg = calls == 0 ? "AI call soft limit disabled." : "Soft limit set to " + calls + " calls per window.";
+        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int setHard(CommandContext<CommandSourceStack> ctx, int calls) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setHardBudgetCallsPerWindow(calls);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        String msg = calls == 0 ? "AI call hard limit disabled." : "Hard limit set to " + calls + " calls per window.";
+        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int setWindow(CommandContext<CommandSourceStack> ctx, int minutes) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setBudgetWindowMinutes(minutes);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        // Reset call window so new window starts from now
+        BudgetTracker.reset(player.getUUID().toString());
+        ctx.getSource().sendSuccess(() -> Component.literal("Budget window set to " + minutes + " min. Call window reset.")
+                .withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int setJoulesSoft(CommandContext<CommandSourceStack> ctx, int joules) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setSoftJoulesThreshold(joules);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        String msg = joules == 0 ? "Joules soft limit disabled." : "Joules soft limit set to " + joules + " Joules.";
+        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int setJoulesHard(CommandContext<CommandSourceStack> ctx, int joules) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setHardJoulesThreshold(joules);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        String msg = joules == 0 ? "Joules hard limit disabled." : "Joules hard limit set to " + joules + " Joules.";
+        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int setJoulesRefresh(CommandContext<CommandSourceStack> ctx, int seconds) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        cfg.setJoulesRefreshIntervalSeconds(seconds);
+        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        ctx.getSource().sendSuccess(() -> Component.literal("Joules refresh interval set to " + seconds + " seconds.")
+                .withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int reset(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        String key = player.getUUID().toString();
+        BudgetTracker.reset(key);
+        JoulesCache.invalidate(key);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Budget window and Joules cache reset. AI requests allowed again.")
+                .withStyle(ChatFormatting.GREEN), false);
+        return 1;
+    }
+
+    private static int status(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        String key = player.getUUID().toString();
+
+        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        Optional<JoulesCache.JoulesSnapshot> snapOpt = JoulesCache.get(key);
+
+        MutableComponent header = Component.literal("=== Budget Status ===").withStyle(ChatFormatting.GOLD);
+        ctx.getSource().sendSuccess(() -> header, false);
+
+        ctx.getSource().sendSuccess(() -> Component.literal("Call limits: ")
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal(
+                        "soft=" + fmtLimit(cfg.getSoftBudgetCallsPerWindow())
+                        + " hard=" + fmtLimit(cfg.getHardBudgetCallsPerWindow())
+                        + " window=" + cfg.getBudgetWindowMinutes() + "min"
+                ).withStyle(ChatFormatting.WHITE)), false);
+
+        ctx.getSource().sendSuccess(() -> Component.literal("Joules limits: ")
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal(
+                        "soft=" + fmtLimit(cfg.getSoftJoulesThreshold())
+                        + " hard=" + fmtLimit(cfg.getHardJoulesThreshold())
+                        + " refresh=" + cfg.getJoulesRefreshIntervalSeconds() + "s"
+                ).withStyle(ChatFormatting.WHITE)), false);
+
+        BudgetTracker.WindowSnapshot winSnap = BudgetTracker.statusSnapshot(cfg).get(key);
+        if (winSnap != null) {
+            long remaining = Math.max(0, winSnap.windowEndMs() - System.currentTimeMillis()) / 1000L;
+            ctx.getSource().sendSuccess(() -> Component.literal("Calls this window: ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal(
+                            winSnap.callCount() + " (window resets in ~" + remaining + "s)"
+                    ).withStyle(ChatFormatting.WHITE)), false);
+        } else {
+            ctx.getSource().sendSuccess(() -> Component.literal("Calls this window: ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal("0 (no window started)").withStyle(ChatFormatting.WHITE)), false);
+        }
+
+        if (snapOpt.isPresent()) {
+            JoulesCache.JoulesSnapshot snap = snapOpt.get();
+            ctx.getSource().sendSuccess(() -> Component.literal("Joules (cached): ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal(snap.joulesDisplay() + " Joules").withStyle(ChatFormatting.WHITE)), false);
+            if (!snap.patronTier.isEmpty()) {
+                ctx.getSource().sendSuccess(() -> Component.literal("Patron tier: ")
+                        .withStyle(ChatFormatting.YELLOW)
+                        .append(Component.literal(snap.patronTier).withStyle(ChatFormatting.AQUA)), false);
+            }
+        } else {
+            ctx.getSource().sendSuccess(() -> Component.literal("Joules: ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal("not yet fetched (will refresh on next AI call)")
+                            .withStyle(ChatFormatting.GRAY)), false);
+        }
+
+        return 1;
+    }
+
+    private static String fmtLimit(int val) {
+        return val == 0 ? "off" : String.valueOf(val);
+    }
+}
