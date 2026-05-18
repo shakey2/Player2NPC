@@ -35,6 +35,7 @@ public final class CharacterStorageCommands {
                 .then(UserBlacklistCommands.branch())
                 .then(UserWhitelistCommands.branch())
                 .then(UserSettingsCommands.branch())
+                .then(BudgetCommands.branch())
                 .then(Commands.literal("storage")
                         .then(Commands.literal("delete")
                                 .then(Commands.literal("id").then(Commands.argument("id", StringArgumentType.greedyString())

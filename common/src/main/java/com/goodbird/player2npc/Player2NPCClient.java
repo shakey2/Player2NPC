@@ -1,16 +1,13 @@
-//
-// Source code recreated from a .class file by IntelliJ IDEA
-// (powered by FernFlower decompiler)
-//
-
 package com.goodbird.player2npc;
 
 import com.goodbird.player2npc.client.gui.CharacterSelectionScreen;
+import com.goodbird.player2npc.client.gui.SttConsentScreen;
 import com.goodbird.player2npc.client.util.ClientPersistence;
 import com.goodbird.player2npc.client.render.RenderAutomaton;
 import com.goodbird.player2npc.network.AutomatonSpawnPacket;
 import com.mojang.blaze3d.platform.InputConstants.Type;
 import com.player2.playerengine.PlayerEngineClient;
+import com.player2.playerengine.player2api.ChatclefConfigPersistantState;
 import dev.architectury.event.events.client.ClientPlayerEvent;
 import dev.architectury.event.events.client.ClientTickEvent;
 import dev.architectury.networking.NetworkManager;
@@ -26,6 +23,7 @@ public class Player2NPCClient {
     private static long lastHeartbeatTime = System.nanoTime();
     private static KeyMapping ttsEnableKeybind;
     private static KeyMapping sttKeybind;
+    private static boolean sttWasDown = false;
 
     public Player2NPCClient() {
     }
@@ -67,30 +65,44 @@ public class Player2NPCClient {
         });
         ClientPlayerEvent.CLIENT_PLAYER_JOIN.register((player) -> {
             if (!ClientPersistence.getTTStatus()) {
-                player.sendSystemMessage(
-                        Component.literal("Welcome to Player2NPC!"));
-                player.sendSystemMessage(
-                        Component.literal(
-                                "To spawn a companion, press H. (Make sure you have at least one selected characeter at player2.game)"));
-                player.sendSystemMessage(Component.literal("To toggle text to speech (TTS), press ").append(Component.keybind("key.player2npc.tts_toggle")));
-                player.sendSystemMessage(Component.literal("To toggle speech to text (STT), press ").append(Component.keybind("key.player2npc.stt_toggle")));
+                player.sendSystemMessage(Component.literal("Welcome to Player2NPC!"));
+                player.sendSystemMessage(Component.literal(
+                        "To spawn a companion, press H. (Make sure you have at least one selected character at player2.game)"));
+                player.sendSystemMessage(Component.literal("To toggle text to speech (TTS), press ")
+                        .append(Component.keybind("key.player2npc.tts_toggle")));
+                player.sendSystemMessage(Component.literal("Voice input (STT) is off by default. Hold ")
+                        .append(Component.keybind("key.player2npc.stt_toggle"))
+                        .append(Component.literal(" to enable and provide consent.")));
                 ClientPersistence.saveTTSStatus(true);
             }
+            PlayerEngineClient.syncTtsPreferenceToServer();
         });
         ClientTickEvent.CLIENT_POST.register((client) -> {
             if (openCharacterScreenKeybind.consumeClick() && client.level != null) {
                 client.setScreen(new CharacterSelectionScreen());
             }
             if (ttsEnableKeybind.consumeClick()) {
-                PlayerEngineClient.enabledTTS = !PlayerEngineClient.enabledTTS;
+                PlayerEngineClient.setTtsEnabled(!PlayerEngineClient.isTtsEnabled());
                 client.player.sendSystemMessage(
-                        Component.literal(PlayerEngineClient.enabledTTS ? "Enabled TTS" : "Disabled TTS"));
+                        Component.literal(PlayerEngineClient.isTtsEnabled() ? "Enabled TTS" : "Disabled TTS"));
             }
-            if (sttKeybind.isDown()) {
-                STTUtils.setIsListening(true, AutomatoneEntity.PLAYER2_GAME_ID);
+
+            boolean sttIsDown = sttKeybind.isDown();
+            if (ChatclefConfigPersistantState.canUseStt()) {
+                if (sttIsDown && !sttWasDown) {
+                    STTUtils.setIsListening(true, AutomatoneEntity.PLAYER2_GAME_ID);
+                } else if (!sttIsDown && sttWasDown) {
+                    STTUtils.setIsListening(false, AutomatoneEntity.PLAYER2_GAME_ID);
+                }
             } else {
-                STTUtils.setIsListening(false, AutomatoneEntity.PLAYER2_GAME_ID);
+                if (sttIsDown && !sttWasDown && client.screen == null) {
+                    client.setScreen(new SttConsentScreen(null));
+                }
+                if (!sttIsDown && sttWasDown) {
+                    STTUtils.setIsListening(false, AutomatoneEntity.PLAYER2_GAME_ID);
+                }
             }
+            sttWasDown = sttIsDown;
         });
 
         ClientTickEvent.CLIENT_PRE.register((client) -> {

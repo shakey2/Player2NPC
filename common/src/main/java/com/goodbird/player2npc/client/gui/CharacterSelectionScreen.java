@@ -45,6 +45,11 @@ public class CharacterSelectionScreen extends Screen {
                 AuthenticationManager.getInstance().checkAuth(minecraft.player, "player2-ai-npc-minecraft");
             });
         }).bounds((this.width-256)/2+8, (this.height-200)/2+170, 120, 20).build());
+
+        this.addRenderableWidget(Button.builder(
+                Component.translatable("screen.player2npc.character_selection.voice_settings"),
+                btn -> minecraft.setScreen(new SttConsentScreen(this))
+        ).bounds((this.width-256)/2+136, (this.height-200)/2+170, 112, 20).build());
     }
 
     private void createCharacterCards() {
