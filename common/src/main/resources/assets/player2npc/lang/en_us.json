@@ -5,8 +5,8 @@
   "category.player2npc.keys": "Player2NPC",
 
   "screen.player2npc.stt_consent.title": "Enable Voice Input (STT)?",
-  "screen.player2npc.stt_consent.line1": "While held, the STT key captures your microphone audio.",
-  "screen.player2npc.stt_consent.line2": "Audio is sent to Player2 (player2.game) for speech-to-text.",
+  "screen.player2npc.stt_consent.line1": "While held, the STT key starts speech recognition in the Player2 app.",
+  "screen.player2npc.stt_consent.line2": "The Player2 app uses your microphone for speech-to-text while the key is held.",
   "screen.player2npc.stt_consent.line3": "You can disable or revoke this at any time via Voice Settings.",
   "screen.player2npc.stt_consent.line4": "By accepting you consent to microphone capture and remote transcription.",
   "screen.player2npc.stt_consent.accept": "Accept & Enable",
