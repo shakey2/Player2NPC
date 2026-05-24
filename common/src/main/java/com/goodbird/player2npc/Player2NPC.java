@@ -9,7 +9,6 @@ import com.goodbird.player2npc.companion.AutomatoneEntity;
 import com.goodbird.player2npc.companion.CompanionManager;
 import com.goodbird.player2npc.network.AutomatoneDespawnRequestPacket;
 import com.goodbird.player2npc.network.AutomatoneSpawnRequestPacket;
-import com.player2.playerengine.PlayerEngineController;
 import com.player2.playerengine.player2api.auth.AuthenticationManager;
 import com.goodbird.player2npc.companion.CharacterStorageCommands;
 import com.goodbird.player2npc.companion.ServerUsernameUuidCache;
@@ -37,6 +36,7 @@ public class Player2NPC {
     public static final ResourceLocation SPAWN_PACKET_ID = new ResourceLocation("player2npc", "spawn_automatone");
     public static final ResourceLocation SPAWN_REQUEST_PACKET_ID = new ResourceLocation("player2npc", "request_spawn_automatone");
     public static final ResourceLocation DESPAWN_REQUEST_PACKET_ID = new ResourceLocation("player2npc", "request_despawn_automatone");
+    public static final ResourceLocation EQUIP_SYNC_PACKET_ID = new ResourceLocation("player2npc", "sync_automatone_equipment");
 
     public Player2NPC() {
     }
@@ -78,7 +78,6 @@ public class Player2NPC {
             CompanionManager.remove(player);
         });
         
-        TickEvent.SERVER_POST.register(PlayerEngineController::staticServerTick);
         TickEvent.PLAYER_POST.register((player) -> {
             if (player instanceof ServerPlayer serverPlayer)
                 CompanionManager.get(serverPlayer).serverTick();
