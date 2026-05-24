@@ -9,7 +9,6 @@ import com.goodbird.player2npc.companion.AutomatoneEntity;
 import com.goodbird.player2npc.companion.CompanionManager;
 import com.goodbird.player2npc.network.AutomatoneDespawnRequestPacket;
 import com.goodbird.player2npc.network.AutomatoneSpawnRequestPacket;
-import com.player2.playerengine.PlayerEngineController;
 import com.player2.playerengine.player2api.auth.AuthenticationManager;
 import com.goodbird.player2npc.companion.CharacterStorageCommands;
 import com.goodbird.player2npc.companion.ServerUsernameUuidCache;
@@ -37,6 +36,7 @@ public class Player2NPC {
     public static final ResourceLocation SPAWN_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "spawn_automatone");
     public static final ResourceLocation SPAWN_REQUEST_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "request_spawn_automatone");
     public static final ResourceLocation DESPAWN_REQUEST_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "request_despawn_automatone");
+    public static final ResourceLocation EQUIP_SYNC_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "sync_automatone_equipment");
 
     public Player2NPC() {
     }
@@ -59,6 +59,7 @@ public class Player2NPC {
         EntityAttributeRegistry.register(AUTOMATONE, Zombie::createAttributes);
         if (dev.architectury.platform.Platform.getEnvironment() == dev.architectury.utils.Env.SERVER) {
             NetworkManager.registerS2CPayloadType(SPAWN_PACKET_ID);
+            NetworkManager.registerS2CPayloadType(EQUIP_SYNC_PACKET_ID);
         }
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, SPAWN_REQUEST_PACKET_ID, AutomatoneSpawnRequestPacket::handle);
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, DESPAWN_REQUEST_PACKET_ID, AutomatoneDespawnRequestPacket::handle);
@@ -81,7 +82,6 @@ public class Player2NPC {
             CompanionManager.remove(player);
         });
         
-        TickEvent.SERVER_POST.register(PlayerEngineController::staticServerTick);
         TickEvent.PLAYER_POST.register((player) -> {
             if (player instanceof ServerPlayer serverPlayer)
                 CompanionManager.get(serverPlayer).serverTick();

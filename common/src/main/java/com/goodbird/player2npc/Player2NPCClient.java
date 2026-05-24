@@ -4,6 +4,7 @@ import com.goodbird.player2npc.client.gui.CharacterSelectionScreen;
 import com.goodbird.player2npc.client.gui.SttConsentScreen;
 import com.goodbird.player2npc.client.render.RenderAutomaton;
 import com.goodbird.player2npc.client.util.ClientPersistence;
+import com.goodbird.player2npc.network.AutomatonEquipmentSyncPacket;
 import com.goodbird.player2npc.network.AutomatonSpawnPacket;
 import com.mojang.blaze3d.platform.InputConstants.Type;
 import com.player2.playerengine.PlayerEngineClient;
@@ -59,6 +60,17 @@ public class Player2NPCClient {
                 packet.getInventory().player = entity;
                 entity.inventory = packet.getInventory();
                 world.addEntity(entity);
+            });
+        });
+        NetworkManager.registerReceiver(NetworkManager.Side.S2C, Player2NPC.EQUIP_SYNC_PACKET_ID, (buf, context) -> {
+            AutomatonEquipmentSyncPacket packet = new AutomatonEquipmentSyncPacket(buf);
+            context.queue(() -> {
+                if (!(context.getPlayer().level() instanceof net.minecraft.client.multiplayer.ClientLevel world)) {
+                    return;
+                }
+                if (world.getEntity(packet.getEntityId()) instanceof AutomatoneEntity entity) {
+                    packet.applyToClientEntity(entity, world.registryAccess());
+                }
             });
         });
         ClientPlayerEvent.CLIENT_PLAYER_JOIN.register((player) -> {

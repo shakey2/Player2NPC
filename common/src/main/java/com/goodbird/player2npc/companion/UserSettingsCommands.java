@@ -19,6 +19,9 @@ public final class UserSettingsCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> branch() {
         return Commands.literal("user-settings")
                 .then(Commands.literal("show").executes(UserSettingsCommands::show))
+                .then(Commands.literal("auto-equip")
+                        .then(Commands.literal("on").executes(ctx -> setAutoEquip(ctx, true)))
+                        .then(Commands.literal("off").executes(ctx -> setAutoEquip(ctx, false))))
                 .then(Commands.literal("userlistmode")
                         .then(Commands.literal("blacklist").executes(ctx -> setUserMode(ctx, OwnerUserSettingsStorage.ListMode.BLACKLIST)))
                         .then(Commands.literal("whitelist").executes(ctx -> setUserMode(ctx, OwnerUserSettingsStorage.ListMode.WHITELIST))))
@@ -39,14 +42,32 @@ public final class UserSettingsCommands {
                 .append(Component.literal(s.userListMode().toJson()).withStyle(ChatFormatting.YELLOW)), false);
         ctx.getSource().sendSuccess(() -> Component.literal("botListMode: ").withStyle(ChatFormatting.GOLD)
                 .append(Component.literal(s.botListMode().toJson()).withStyle(ChatFormatting.YELLOW)), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("autoEquipArmor (armor + weapon auto-equip): ").withStyle(ChatFormatting.GOLD)
+                .append(Component.literal(String.valueOf(s.autoEquipArmor())).withStyle(ChatFormatting.YELLOW)), false);
         return 1;
+    }
+
+    private static int setAutoEquip(CommandContext<CommandSourceStack> ctx, boolean enabled) throws CommandSyntaxException {
+        ServerPlayer self = requirePlayer(ctx);
+        MinecraftServer server = ctx.getSource().getServer();
+        OwnerUserSettingsStorage.Snapshot cur = OwnerUserSettingsStorage.load(server, self.getUUID());
+        OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(
+                cur.userListMode(), cur.botListMode(), enabled);
+        try {
+            OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
+            ctx.getSource().sendSuccess(() -> Component.literal("autoEquipArmor set to " + enabled + " (armor and main-hand weapon pickup auto-equip)").withStyle(ChatFormatting.GREEN), false);
+            return 1;
+        } catch (IOException e) {
+            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            return 0;
+        }
     }
 
     private static int setUserMode(CommandContext<CommandSourceStack> ctx, OwnerUserSettingsStorage.ListMode mode) throws CommandSyntaxException {
         ServerPlayer self = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
         OwnerUserSettingsStorage.Snapshot cur = OwnerUserSettingsStorage.load(server, self.getUUID());
-        OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(mode, cur.botListMode());
+        OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(mode, cur.botListMode(), cur.autoEquipArmor());
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
             ctx.getSource().sendSuccess(() -> Component.literal("userListMode set to " + mode.toJson()).withStyle(ChatFormatting.GREEN), false);
@@ -61,7 +82,7 @@ public final class UserSettingsCommands {
         ServerPlayer self = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
         OwnerUserSettingsStorage.Snapshot cur = OwnerUserSettingsStorage.load(server, self.getUUID());
-        OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(cur.userListMode(), mode);
+        OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(cur.userListMode(), mode, cur.autoEquipArmor());
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
             ctx.getSource().sendSuccess(() -> Component.literal("botListMode set to " + mode.toJson()).withStyle(ChatFormatting.GREEN), false);

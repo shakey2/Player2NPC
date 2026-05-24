@@ -7,6 +7,7 @@ package com.goodbird.player2npc.companion;
 
 import com.player2.playerengine.player2api.Character;
 import com.goodbird.player2npc.Player2NPC;
+import com.goodbird.player2npc.network.AutomatonEquipmentSyncPacket;
 import com.goodbird.player2npc.network.AutomatonSpawnPacket;
 import com.player2.playerengine.PlayerEngineController;
 import com.player2.playerengine.automaton.api.IBaritone;
@@ -17,6 +18,8 @@ import com.player2.playerengine.automaton.api.entity.IInventoryProvider;
 import com.player2.playerengine.automaton.api.entity.LivingEntityHungerManager;
 import com.player2.playerengine.automaton.api.entity.LivingEntityInteractionManager;
 import com.player2.playerengine.automaton.api.entity.LivingEntityInventory;
+import com.player2.playerengine.multiversion.equip.EquipVer;
+import com.player2.playerengine.multiversion.equip.WeaponVer;
 import com.player2.playerengine.player2api.manager.ConversationManager;
 import com.player2.playerengine.player2api.utils.CharacterUtils;
 import net.minecraft.core.Vec3i;
@@ -200,8 +203,16 @@ public class AutomatoneEntity extends LivingEntity
                     .inflate((double) vec3i.getX(), (double) vec3i.getY(), (double) vec3i.getZ()))) {
                 if (!itemEntity.isRemoved() && !itemEntity.getItem().isEmpty() && !itemEntity.hasPickUpDelay()) {
                     ItemStack itemStack = itemEntity.getItem();
+                    ItemStack acquired = itemStack.copy();
                     int i = itemStack.getCount();
                     if (this.getLivingInventory().insertStack(itemStack)) {
+                        if (this.controller != null) {
+                            if (EquipVer.isBodyArmor(acquired)) {
+                                this.controller.getPickupArmorEvalQueue().enqueueFromPickup(acquired);
+                            } else if (WeaponVer.isMeleeWeapon(acquired)) {
+                                this.controller.getPickupWeaponEvalQueue().enqueueFromPickup(acquired);
+                            }
+                        }
                         this.take(itemEntity, i);
                         if (itemStack.isEmpty()) {
                             itemEntity.discard();
@@ -279,6 +290,7 @@ public class AutomatoneEntity extends LivingEntity
             this.inventory.armor.set(slot.getIndex(), stack);
         }
 
+        AutomatonEquipmentSyncPacket.broadcast(this);
     }
 
     public Character getCharacter() {
