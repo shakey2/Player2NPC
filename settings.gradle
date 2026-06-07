@@ -7,7 +7,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'player2npc'
+rootProject.name = 'Player2NPC-arch-1.21.1-persistentdataPort'
 
 include 'common'
 include 'fabric'

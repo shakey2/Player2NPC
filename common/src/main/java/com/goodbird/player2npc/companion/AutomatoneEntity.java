@@ -175,7 +175,7 @@ public class AutomatoneEntity extends LivingEntity
         this.manager.update();
         this.inventory.updateItems();
         ++this.attackStrengthTicker;
-        if (!this.level().isClientSide) {
+        if (!this.level().isClientSide && this.controller != null && this.isAlive()) {
             this.controller.serverTick();
         }
 
@@ -328,6 +328,7 @@ public class AutomatoneEntity extends LivingEntity
             PersistentDataManager.saveInventory(this);
             if (this.controller != null) {
                 this.controller.stop();
+                this.controller.unregisterFromGlobalRegistry();
             }
             ConversationManager.despwnCompanion(this.getUUID());
 
@@ -341,5 +342,18 @@ public class AutomatoneEntity extends LivingEntity
                 CompanionManager.get(ownerSp).spawnCompanion(this.character);
             }
         }
+    }
+
+    @Override
+    public void remove(RemovalReason reason) {
+        if (!this.level().isClientSide) {
+            PersistentDataManager.saveInventory(this);
+            if (this.controller != null) {
+                this.controller.stop();
+                this.controller.unregisterFromGlobalRegistry();
+            }
+            ConversationManager.despwnCompanion(this.getUUID());
+        }
+        super.remove(reason);
     }
 }

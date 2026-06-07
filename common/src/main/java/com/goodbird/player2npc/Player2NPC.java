@@ -16,6 +16,8 @@ import dev.architectury.event.events.common.CommandRegistrationEvent;
 import dev.architectury.event.events.common.PlayerEvent;
 import dev.architectury.event.events.common.TickEvent;
 import dev.architectury.networking.NetworkManager;
+import dev.architectury.platform.Platform;
+import dev.architectury.utils.Env;
 import dev.architectury.registry.level.entity.EntityAttributeRegistry;
 import dev.architectury.registry.registries.DeferredRegister;
 import dev.architectury.registry.registries.RegistrySupplier;
@@ -57,7 +59,7 @@ public class Player2NPC {
         LOGGER.info("INIT");
         ENTITY_TYPES.register();
         EntityAttributeRegistry.register(AUTOMATONE, Zombie::createAttributes);
-        if (dev.architectury.platform.Platform.getEnvironment() == dev.architectury.utils.Env.SERVER) {
+        if (Platform.getEnvironment() == Env.SERVER) {
             NetworkManager.registerS2CPayloadType(SPAWN_PACKET_ID);
             NetworkManager.registerS2CPayloadType(EQUIP_SYNC_PACKET_ID);
         }

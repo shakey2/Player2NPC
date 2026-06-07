@@ -180,6 +180,7 @@ public class CompanionManager {
                     ConversationManager.despwnCompanion(automatone.getUUID());
                     if (automatone.controller != null) {
                         automatone.controller.stop();
+                        automatone.controller.unregisterFromGlobalRegistry();
                     }
                     CompoundTag savedState = new CompoundTag();
                     automatone.addAdditionalSaveData(savedState);

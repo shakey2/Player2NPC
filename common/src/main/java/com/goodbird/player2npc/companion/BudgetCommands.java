@@ -5,8 +5,12 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.player2.playerengine.executor.BudgetTracker;
+import com.player2.playerengine.player2api.BudgetThresholdsResolver;
 import com.player2.playerengine.player2api.JoulesCache;
 import com.player2.playerengine.player2api.PlayerBudgetConfigHolder;
+import com.player2.playerengine.player2api.config.BudgetThresholds;
+import com.player2.playerengine.player2api.config.Player2ServerConfigHolder;
+import com.player2.playerengine.player2api.config.Player2ServerRuntimeConfig;
 import com.player2.playerengine.player2api.config.PlayerBudgetConfig;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -19,13 +23,21 @@ import net.minecraft.server.level.ServerPlayer;
 import java.util.Optional;
 
 /**
- * Per-player budget sub-commands under {@code /player2npc budget} (permission 0).
+ * Budget sub-commands under {@code /player2npc budget} (permission 0).
  *
- * <p>Each sub-command reads/writes the executing player's {@link PlayerBudgetConfig} stored at
- * {@code player2npc/persistentdata/owners/<uuid>/player-budget.json}.
+ * <p>These commands read and write the <em>same</em> config source that the PlayerEngine A4
+ * enforcement gate consults, so that what {@code status} reports and what {@code set*} changes
+ * always matches what is actually enforced:
+ * <ul>
+ *   <li>Integrated singleplayer and any non-dedicated / non-{@code PROMPTER_PAYS} context use the
+ *       server config {@code server_player2.json} via {@link Player2ServerConfigHolder} — the file
+ *       the gate enforces in those contexts (see
+ *       {@link BudgetThresholdsResolver#useServerConfigForBudget(MinecraftServer)}).</li>
+ *   <li>Dedicated {@code PROMPTER_PAYS} uses the executing player's {@link PlayerBudgetConfig}
+ *       stored at {@code player2npc/persistentdata/owners/<uuid>/player-budget.json}.</li>
+ * </ul>
  *
- * <p>These settings apply only when {@code payerMode = PROMPTER_PAYS}. Server-global budget limits
- * for {@code OWNER_PAYS_ALL} mode are managed by OPs via {@code /playerengine player2 budget}.
+ * <p>Server-global budget limits are also manageable by OPs via {@code /playerengine player2 budget}.
  */
 public final class BudgetCommands {
 
@@ -60,12 +72,29 @@ public final class BudgetCommands {
         return ctx.getSource().getPlayerOrException();
     }
 
+    /**
+     * True when budget settings should be read/written on the server config ({@code server_player2.json})
+     * — the source the A4 gate enforces — rather than the per-player file. Mirrors
+     * {@code BudgetConfigCommands.resolveTarget} in PlayerEngine: server config wins on integrated
+     * singleplayer (non-dedicated) and whenever payerMode is not dedicated {@code PROMPTER_PAYS}.
+     */
+    private static boolean useServerConfig(MinecraftServer server) {
+        return BudgetThresholdsResolver.usesServerBudgetStore(server);
+    }
+
     private static int setSoft(CommandContext<CommandSourceStack> ctx, int calls) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setSoftBudgetCallsPerWindow(calls);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setSoftBudgetCallsPerWindow(calls);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setSoftBudgetCallsPerWindow(calls);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         String msg = calls == 0 ? "AI call soft limit disabled." : "Soft limit set to " + calls + " calls per window.";
         ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
         return 1;
@@ -74,9 +103,16 @@ public final class BudgetCommands {
     private static int setHard(CommandContext<CommandSourceStack> ctx, int calls) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setHardBudgetCallsPerWindow(calls);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setHardBudgetCallsPerWindow(calls);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setHardBudgetCallsPerWindow(calls);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         String msg = calls == 0 ? "AI call hard limit disabled." : "Hard limit set to " + calls + " calls per window.";
         ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
         return 1;
@@ -85,9 +121,16 @@ public final class BudgetCommands {
     private static int setWindow(CommandContext<CommandSourceStack> ctx, int minutes) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setBudgetWindowMinutes(minutes);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setBudgetWindowMinutes(minutes);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setBudgetWindowMinutes(minutes);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         // Reset call window so new window starts from now
         BudgetTracker.reset(player.getUUID().toString());
         ctx.getSource().sendSuccess(() -> Component.literal("Budget window set to " + minutes + " min. Call window reset.")
@@ -98,9 +141,16 @@ public final class BudgetCommands {
     private static int setJoulesSoft(CommandContext<CommandSourceStack> ctx, int joules) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setSoftJoulesThreshold(joules);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setSoftJoulesThreshold(joules);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setSoftJoulesThreshold(joules);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         String msg = joules == 0 ? "Joules soft limit disabled." : "Joules soft limit set to " + joules + " Joules.";
         ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
         return 1;
@@ -109,9 +159,16 @@ public final class BudgetCommands {
     private static int setJoulesHard(CommandContext<CommandSourceStack> ctx, int joules) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setHardJoulesThreshold(joules);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setHardJoulesThreshold(joules);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setHardJoulesThreshold(joules);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         String msg = joules == 0 ? "Joules hard limit disabled." : "Joules hard limit set to " + joules + " Joules.";
         ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
         return 1;
@@ -120,9 +177,16 @@ public final class BudgetCommands {
     private static int setJoulesRefresh(CommandContext<CommandSourceStack> ctx, int seconds) throws CommandSyntaxException {
         ServerPlayer player = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
-        cfg.setJoulesRefreshIntervalSeconds(seconds);
-        PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        if (useServerConfig(server)) {
+            Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
+            cfg.setJoulesRefreshIntervalSeconds(seconds);
+            Player2ServerConfigHolder.validateAndFix(cfg);
+            Player2ServerConfigHolder.save();
+        } else {
+            PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+            cfg.setJoulesRefreshIntervalSeconds(seconds);
+            PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
+        }
         ctx.getSource().sendSuccess(() -> Component.literal("Joules refresh interval set to " + seconds + " seconds.")
                 .withStyle(ChatFormatting.GREEN), false);
         return 1;
@@ -144,11 +208,19 @@ public final class BudgetCommands {
         MinecraftServer server = ctx.getSource().getServer();
         String key = player.getUUID().toString();
 
-        PlayerBudgetConfig cfg = PlayerBudgetConfigHolder.load(server, player.getUUID());
+        boolean serverFile = useServerConfig(server);
+        BudgetThresholds cfg = serverFile
+                ? Player2ServerConfigHolder.get()
+                : PlayerBudgetConfigHolder.load(server, player.getUUID());
         Optional<JoulesCache.JoulesSnapshot> snapOpt = JoulesCache.get(key);
 
         MutableComponent header = Component.literal("=== Budget Status ===").withStyle(ChatFormatting.GOLD);
         ctx.getSource().sendSuccess(() -> header, false);
+
+        String fileNote = serverFile ? "server_player2.json" : "player-budget.json";
+        ctx.getSource().sendSuccess(() -> Component.literal("Limits from: ")
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal(fileNote).withStyle(ChatFormatting.WHITE)), false);
 
         ctx.getSource().sendSuccess(() -> Component.literal("Call limits: ")
                 .withStyle(ChatFormatting.YELLOW)
