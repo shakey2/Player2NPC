@@ -7,7 +7,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'player2npc'
+rootProject.name = 'Player2NPC-arch-1.20.1-persistentdata'
 
 include 'common'
 include 'fabric'

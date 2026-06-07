@@ -171,7 +171,7 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
         this.manager.update();
         this.inventory.updateItems();
         ++this.attackStrengthTicker;
-        if (!this.level().isClientSide) {
+        if (!this.level().isClientSide && this.controller != null && this.isAlive()) {
             this.controller.serverTick();
         }
 
@@ -310,6 +310,7 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
             PersistentDataManager.saveInventory(this);
             if (this.controller != null) {
                 this.controller.stop();
+                this.controller.unregisterFromGlobalRegistry();
             }
             ConversationManager.despwnCompanion(this.getUUID());
         }
