@@ -22,27 +22,36 @@ public class PersistentDataManager {
         if (entity.character == null || entity.level().isClientSide) return;
 
         CompletableFuture.runAsync(() -> {
-            try {
-                String characterId = getCharacterIdOrNull(entity);
-                if (characterId == null) return;
-                Path inventoryFile = getInventoryFileForSave(entity, characterId);
-
-                ListTag inventoryNbt = entity.getLivingInventory().writeNbt(new ListTag());
-                CompoundTag wrapper = new CompoundTag();
-                wrapper.put("Inventory", inventoryNbt);
-
-                Files.createDirectories(inventoryFile.getParent());
-                try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(inventoryFile))) {
-                    NbtIo.write(wrapper, out);
-                }
-                OwnerCharacterStoragePaths.writeDisplayJson(inventoryFile.getParent(), entity.character);
-                saveConversationNow(entity);
-                LOGGER.info("Saved per-world inventory ownerPath={} characterId={}",
-                        inventoryFile.getParent(), characterId);
-            } catch (Exception e) {
-                LOGGER.error("Error saving persistent data for " + entity.character.name(), e);
-            }
+            saveInventoryInternal(entity);
         });
+    }
+
+    public static void saveInventoryNow(AutomatoneEntity entity) {
+        if (entity.character == null || entity.level().isClientSide) return;
+        saveInventoryInternal(entity);
+    }
+
+    private static void saveInventoryInternal(AutomatoneEntity entity) {
+        try {
+            String characterId = getCharacterIdOrNull(entity);
+            if (characterId == null) return;
+            Path inventoryFile = getInventoryFileForSave(entity, characterId);
+
+            ListTag inventoryNbt = entity.getLivingInventory().writeNbt(new ListTag());
+            CompoundTag wrapper = new CompoundTag();
+            wrapper.put("Inventory", inventoryNbt);
+
+            Files.createDirectories(inventoryFile.getParent());
+            try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(inventoryFile))) {
+                NbtIo.write(wrapper, out);
+            }
+            OwnerCharacterStoragePaths.writeDisplayJson(inventoryFile.getParent(), entity.character);
+            saveConversationNow(entity);
+            LOGGER.info("Saved per-world inventory ownerPath={} characterId={}",
+                    inventoryFile.getParent(), characterId);
+        } catch (Exception e) {
+            LOGGER.error("Error saving persistent data for " + entity.character.name(), e);
+        }
     }
 
     public static void loadInventory(AutomatoneEntity entity) {

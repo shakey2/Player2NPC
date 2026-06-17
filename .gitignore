@@ -24,3 +24,6 @@ classes/
 # Copyright Files
 !/.idea/copyright/Baritone.xml
 !/.idea/copyright/profiles_settings.xml
+
+# Coding agent artifacts — branches are for build/code only, never agent instructions (see AGENTS.md)
+.claude/

@@ -30,8 +30,10 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 
 import java.util.UUID;
@@ -177,6 +179,7 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
 
         super.tick();
         this.updateSwingTime();
+        this.hungerManager.update(this);
     }
 
     public void aiStep() {
@@ -305,11 +308,55 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
     }
 
     @Override
+    protected void dropAllDeathLoot(DamageSource damageSource) {
+        super.dropAllDeathLoot(damageSource);
+        inventory.dropAll();
+    }
+
+    @Override
+    public void die(DamageSource damageSource) {
+        super.die(damageSource);
+        if (!level().isClientSide()) {
+            PersistentDataManager.saveInventory(this);
+            // Resolve the owner up front so an interrupted task can be reported to the player + model
+            // BEFORE despwnCompanion wipes the conversation queue.
+            Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
+            if (this.controller != null) {
+                this.controller.stopWithRespawnNotification(
+                        ownerPlayer instanceof ServerPlayer ownerSp0 ? ownerSp0 : null);
+                this.controller.unregisterFromGlobalRegistry();
+            }
+            ConversationManager.despwnCompanion(this.getUUID());
+
+            // Owner may be null (e.g. world reload before any player rejoined). Skip notification
+            // + auto-respawn when we have no live owner to attach the new companion to.
+            if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
+                ownerSp.sendSystemMessage(
+                        Component.literal("Your companion " + this.character.shortName() + " died!"));
+                ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
+                CompanionManager.get(ownerSp).spawnCompanion(this.character);
+            }
+        }
+    }
+
+    @Override
     public void remove(RemovalReason reason) {
+        // On death, die() has already run the full cleanup (saveInventory +
+        // stopWithRespawnNotification + unregisterFromGlobalRegistry + despwnCompanion).
+        // MC 1.20.1 LivingEntity.die() does not remove immediately; the entity lingers for
+        // deathTime ticks, then tickDeath() calls remove(RemovalReason.KILLED). Re-running
+        // the cleanup here would double-save, double-cancel Baritone on a dead entity, and
+        // despwn an already-removed UUID. Skip the cleanup block on the death path.
+        if (reason == RemovalReason.KILLED) {
+            super.remove(reason);
+            return;
+        }
         if (!this.level().isClientSide) {
             PersistentDataManager.saveInventory(this);
             if (this.controller != null) {
-                this.controller.stop();
+                Player ownerPlayer = this.controller.getOwner();
+                this.controller.stopWithRespawnNotification(
+                        ownerPlayer instanceof ServerPlayer ownerSp ? ownerSp : null);
                 this.controller.unregisterFromGlobalRegistry();
             }
             ConversationManager.despwnCompanion(this.getUUID());

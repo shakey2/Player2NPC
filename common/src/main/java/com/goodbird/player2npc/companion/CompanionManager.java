@@ -7,6 +7,7 @@ package com.goodbird.player2npc.companion;
 
 import com.goodbird.player2npc.mixins.IEntityPersistentData;
 import com.player2.playerengine.player2api.Character;
+import com.player2.playerengine.player2api.manager.ConversationManager;
 import com.player2.playerengine.player2api.utils.CharacterUtils;
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -69,7 +70,7 @@ public class CompanionManager {
         }
         String name = character.name();
         if (this._despawnedCompanionData.containsKey(name)) {
-            return SummonIntent.RESTORE_DESPAWNED;
+            return SummonIntent.CREATE_NEW;
         }
         UUID companionUuid = this._companionMap.get(name);
         if (companionUuid == null) {
@@ -120,57 +121,49 @@ public class CompanionManager {
         }
         if (this._player.level() != null && this._player.getServer() != null) {
             LOGGER.info("ensureCompanionExists NOTNULL");
-            UUID companionUuid = (UUID)this._companionMap.get(character.name());
             ServerLevel world = this._player.serverLevel();
+            // Dismiss stores a snapshot in _despawnedCompanionData. The old "restore from NBT" path was
+            // commented out to stop auto-respawns; leaving the key set with an empty branch made re-summon a no-op.
+            // Drop the stale snapshot so we can spawn/teleport like a fresh request.
             if (this._despawnedCompanionData.containsKey(character.name())) {
-                LOGGER.info("ensureCompanionExists DESPAWNED");
+                LOGGER.info("ensureCompanionExists: clearing despawned snapshot (restore disabled) so summon can proceed");
+                this._despawnedCompanionData.remove(character.name());
+                writeToNbt();
+            }
+            UUID companionUuid = (UUID) this._companionMap.get(character.name());
+            Entity existingCompanion = companionUuid != null ? world.getEntity(companionUuid) : null;
+            BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
+            if (existingCompanion instanceof AutomatoneEntity && existingCompanion.isAlive()) {
+                LOGGER.info("ensureCompanionExists TP");
+                AutomatoneEntity automatone = (AutomatoneEntity) existingCompanion;
+                // Reattach owner: world load / server restart paths build the controller without an owner,
+                // and prior teleport-on-rejoin left it unset. Without this, ConversationManager.process
+                // skips the bot (owner != null filter) and the user must despawn+resummon to recover.
+                automatone.reattachOwner(this._player);
+                automatone.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F);
+                PrintStream var11 = System.out;
+                String var13 = character.name();
+                var11.println("Teleported existing companion: " + var13 + " for player " + this._player.getName().getString());
+            } else {
+                LOGGER.info("ensureCompanionExists SPAWN");
                 try {
-                    CompoundTag savedState = (CompoundTag) this._despawnedCompanionData.remove(character.name());
-                    AutomatoneEntity restoredCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
-                    restoredCompanion.readAdditionalSaveData(savedState);
-                    BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
-                    restoredCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
-                    world.addFreshEntity(restoredCompanion);
-                    this._companionMap.put(character.name(), restoredCompanion.getUUID());
-                    PrintStream var10000 = System.out;
-                    String var10001 = character.name();
-                    LOGGER.info("Restored companion from saved state: " + var10001 + " for player " + this._player.getName().getString());
-                }catch (Exception e){
+                    spawnCompanion(character);
+                    System.out.println("Summoned new companion: " + character.name() + " for player " + this._player.getName().getString());
+                } catch (Exception e) {
                     e.printStackTrace();
                 }
                 writeToNbt();
-            } else {
-                Entity existingCompanion = companionUuid != null ? world.getEntity(companionUuid) : null;
-                BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
-                if (existingCompanion instanceof AutomatoneEntity && existingCompanion.isAlive()) {
-                    LOGGER.info("ensureCompanionExists TP");
-                    AutomatoneEntity automatone = (AutomatoneEntity) existingCompanion;
-                    // Reattach owner: world load / server restart paths build the controller without an owner,
-                    // and prior teleport-on-rejoin left it unset. Without this, ConversationManager.process
-                    // skips the bot (owner != null filter) and the user must despawn+resummon to recover.
-                    automatone.reattachOwner(this._player);
-                    automatone.teleportToWithTicket((double)spawnPos.getX() + (double)0.5F, (double)spawnPos.getY(), (double)spawnPos.getZ() + (double)0.5F);
-                    PrintStream var11 = System.out;
-                    String var13 = character.name();
-                    var11.println("Teleported existing companion: " + var13 + " for player " + this._player.getName().getString());
-                } else {
-                    LOGGER.info("ensureCompanionExists SPAWN");
-                    try {
-                        AutomatoneEntity newCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
-                        newCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
-                        world.addFreshEntity(newCompanion);
-                        this._companionMap.put(character.name(), newCompanion.getUUID());
-                        PrintStream var10 = System.out;
-                        String var12 = character.name();
-                        var10.println("Summoned new companion: " + var12 + " for player " + this._player.getName().getString());
-                    }catch (Exception e){
-                        e.printStackTrace();
-                    }
-                    writeToNbt();
-                }
             }
 
         }
+    }
+
+    public void spawnCompanion(Character character){
+        BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
+        AutomatoneEntity newCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
+        newCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
+        this._player.level().addFreshEntity(newCompanion);
+        this._companionMap.put(character.name(), newCompanion.getUUID());
     }
 
     public void dismissCompanion(String characterName) {
@@ -180,6 +173,16 @@ public class CompanionManager {
                 Entity companion = world.getEntity(companionUuid);
                 if (companion instanceof AutomatoneEntity) {
                     AutomatoneEntity automatone = (AutomatoneEntity)companion;
+                    // Persist inventory to per-world file before we discard the entity, so re-summon can load it.
+                    PersistentDataManager.saveInventoryNow(automatone);
+                    // Detect an interrupted active task and notify player + model BEFORE the
+                    // conversation queue is wiped by despwnCompanion (which would drop the InfoMessage).
+                    if (automatone.controller != null) {
+                        automatone.controller.stopWithRespawnNotification(this._player);
+                        automatone.controller.unregisterFromGlobalRegistry();
+                    }
+                    // Ensure no prompts are processed for a despawned companion.
+                    ConversationManager.despwnCompanion(automatone.getUUID());
                     CompoundTag savedState = new CompoundTag();
                     automatone.addAdditionalSaveData(savedState);
                     this._despawnedCompanionData.put(characterName, savedState);
