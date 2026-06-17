@@ -326,15 +326,18 @@ public class AutomatoneEntity extends LivingEntity
         super.die(damageSource);
         if (!level().isClientSide()) {
             PersistentDataManager.saveInventory(this);
+            // Resolve the owner up front so an interrupted task can be reported to the player + model
+            // BEFORE despwnCompanion wipes the conversation queue.
+            Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
             if (this.controller != null) {
-                this.controller.stop();
+                this.controller.stopWithRespawnNotification(
+                        ownerPlayer instanceof ServerPlayer ownerSp0 ? ownerSp0 : null);
                 this.controller.unregisterFromGlobalRegistry();
             }
             ConversationManager.despwnCompanion(this.getUUID());
 
             // Owner may be null (e.g. world reload before any player rejoined). Skip notification
             // + auto-respawn when we have no live owner to attach the new companion to.
-            Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
             if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
                 ownerSp.sendSystemMessage(
                         Component.literal("Your companion " + this.character.shortName() + " died!"));
@@ -346,10 +349,22 @@ public class AutomatoneEntity extends LivingEntity
 
     @Override
     public void remove(RemovalReason reason) {
+        // On death, die() has already run the full cleanup (saveInventory +
+        // stopWithRespawnNotification + unregisterFromGlobalRegistry + despwnCompanion).
+        // MC 1.21.1 LivingEntity.die() does not remove immediately; the entity lingers for
+        // deathTime ticks, then the tick loop calls remove(RemovalReason.KILLED). Re-running
+        // the cleanup here would double-save, double-cancel Baritone on a dead entity, and
+        // despwn an already-removed UUID. Skip the cleanup block on the death path.
+        if (reason == RemovalReason.KILLED) {
+            super.remove(reason);
+            return;
+        }
         if (!this.level().isClientSide) {
             PersistentDataManager.saveInventory(this);
             if (this.controller != null) {
-                this.controller.stop();
+                Player ownerPlayer = this.controller.getOwner();
+                this.controller.stopWithRespawnNotification(
+                        ownerPlayer instanceof ServerPlayer ownerSp ? ownerSp : null);
                 this.controller.unregisterFromGlobalRegistry();
             }
             ConversationManager.despwnCompanion(this.getUUID());

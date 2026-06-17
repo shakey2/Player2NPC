@@ -176,12 +176,14 @@ public class CompanionManager {
                     AutomatoneEntity automatone = (AutomatoneEntity)companion;
                     // Persist inventory to per-world file before we discard the entity, so re-summon can load it.
                     PersistentDataManager.saveInventoryNow(automatone);
-                    // Ensure no prompts are processed for a despawned companion.
-                    ConversationManager.despwnCompanion(automatone.getUUID());
+                    // Detect an interrupted active task and notify player + model BEFORE the
+                    // conversation queue is wiped by despwnCompanion (which would drop the InfoMessage).
                     if (automatone.controller != null) {
-                        automatone.controller.stop();
+                        automatone.controller.stopWithRespawnNotification(this._player);
                         automatone.controller.unregisterFromGlobalRegistry();
                     }
+                    // Ensure no prompts are processed for a despawned companion.
+                    ConversationManager.despwnCompanion(automatone.getUUID());
                     CompoundTag savedState = new CompoundTag();
                     automatone.addAdditionalSaveData(savedState);
                     this._despawnedCompanionData.put(characterName, savedState);
