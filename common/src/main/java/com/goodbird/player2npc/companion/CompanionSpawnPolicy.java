@@ -50,6 +50,14 @@ public final class CompanionSpawnPolicy {
         if (character == null || player.getServer() == null) {
             return Optional.empty();
         }
+        // Permadeath ban check first: a banned characterID can never be summoned for its owner in this
+        // world (GUI/packet/join all route through denial()). Keyed on character.id() (Non-negotiable #3).
+        String banId = characterIdOrEmpty(character);
+        if (!banId.isEmpty() && PermadeathBanStorage.isBanned(player.getServer(), player.getUUID(), banId)) {
+            return Optional.of(Component.literal("Companion " + character.shortName()
+                    + " died permanently in this world and can no longer be summoned.")
+                    .withStyle(ChatFormatting.RED));
+        }
         var cfg = Player2ServerConfigHolder.get();
         CompanionManager.SummonIntent intent = mgr.classifySummon(character);
         int live = mgr.getActiveCompanions().size();
@@ -84,6 +92,22 @@ public final class CompanionSpawnPolicy {
         Set<String> storedOnDisk = listStoredCharacterIds(player.getServer(), player.getUUID());
         List<Character> sorted = new ArrayList<>(incoming);
         sorted.removeIf(Objects::isNull);
+        // Drop permadeath-banned characterIDs before any limit logic. Keep the degradation visible
+        // (DESIGN.md §3): send a one-time chat line to the owner for each dropped banned bot so a
+        // rejoining player understands why a banned bot is missing rather than assuming a bug.
+        Set<String> bannedIds = PermadeathBanStorage.load(player.getServer(), player.getUUID());
+        if (!bannedIds.isEmpty()) {
+            sorted.removeIf(c -> {
+                String id = characterIdOrEmpty(c);
+                if (!id.isEmpty() && bannedIds.contains(id)) {
+                    player.sendSystemMessage(Component.literal("Companion " + c.shortName()
+                            + " was not summoned — it died permanently in this world.")
+                            .withStyle(ChatFormatting.RED));
+                    return true;
+                }
+                return false;
+            });
+        }
         sorted.sort(Comparator
                 .comparing((Character c) -> {
                     String id = characterIdOrEmpty(c);

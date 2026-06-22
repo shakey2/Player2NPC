@@ -20,6 +20,9 @@ import com.player2.playerengine.automaton.api.entity.LivingEntityInteractionMana
 import com.player2.playerengine.automaton.api.entity.LivingEntityInventory;
 import com.player2.playerengine.multiversion.equip.EquipVer;
 import com.player2.playerengine.multiversion.equip.WeaponVer;
+import com.player2.playerengine.player2api.AiConversationFeedback;
+import com.player2.playerengine.player2api.BotLifecycleSettings;
+import com.player2.playerengine.player2api.BotLifecycleSettingsResolver;
 import com.player2.playerengine.player2api.manager.ConversationManager;
 import com.player2.playerengine.player2api.utils.CharacterUtils;
 import net.minecraft.core.Vec3i;
@@ -36,6 +39,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 
+import java.io.IOException;
 import java.util.UUID;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -50,8 +54,11 @@ import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInventoryProvider, IInteractionManagerProvider, IHungerManagerProvider {
+    private static final Logger LOGGER = LogManager.getLogger();
     public LivingEntityInteractionManager manager;
     public LivingEntityInventory inventory;
     public LivingEntityHungerManager hungerManager;
@@ -59,6 +66,13 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
     public Character character;
     public ResourceLocation textureLocation;
     protected Vec3 lastVelocity;
+    /**
+     * Owner UUID mirrored in memory so it is available at {@link #die(DamageSource)} time even when the
+     * owner is offline (then {@code controller.getOwner()} returns null). Populated from init/the spawn
+     * constructor, from {@code owner_uuid} NBT in {@link #readAdditionalSaveData(CompoundTag)}, and from
+     * {@link #reattachOwner(Player)}. Persists nothing new — {@code owner_uuid} already round-trips via NBT.
+     */
+    private UUID ownerUuid;
     public static final String PLAYER2_GAME_ID = "player2-ai-npc-minecraft";
 
     public AutomatoneEntity(EntityType<? extends AutomatoneEntity> type, Level world) {
@@ -83,6 +97,7 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
             this.controller = new PlayerEngineController((IBaritone)IBaritone.KEY.get(this), this.character, "player2-ai-npc-minecraft");
             if (companionOwner != null) {
                 this.controller.setOwner(companionOwner);
+                this.ownerUuid = companionOwner.getUUID();
             }
             ConversationManager.sendGreeting(this.controller, this.character);
             PersistentDataManager.loadInventory(this);
@@ -129,10 +144,13 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
 
         // Restore controller owner from persisted UUID when possible. Owner may be offline; if so,
         // leave unset and CompanionManager.ensureCompanionExists (teleport branch) reattaches when they rejoin.
-        if (!this.level().isClientSide && this.controller != null && tag.hasUUID("owner_uuid")) {
+        if (!this.level().isClientSide && tag.hasUUID("owner_uuid")) {
             UUID ownerUuid = tag.getUUID("owner_uuid");
+            // Mirror in memory unconditionally so die() can write a permadeath ban even if the owner is
+            // offline and the controller never gets reattached.
+            this.ownerUuid = ownerUuid;
             MinecraftServer srv = this.level().getServer();
-            if (srv != null) {
+            if (this.controller != null && srv != null) {
                 ServerPlayer ownerPlayer = srv.getPlayerList().getPlayer(ownerUuid);
                 if (ownerPlayer != null) {
                     this.controller.setOwner(ownerPlayer);
@@ -165,6 +183,7 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
     public void reattachOwner(Player newOwner) {
         if (newOwner != null && this.controller != null) {
             this.controller.setOwner(newOwner);
+            this.ownerUuid = newOwner.getUUID();
         }
     }
 
@@ -318,25 +337,97 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
         super.die(damageSource);
         if (!level().isClientSide()) {
             PersistentDataManager.saveInventory(this);
-            // Resolve the owner up front so an interrupted task can be reported to the player + model
-            // BEFORE despwnCompanion wipes the conversation queue.
+
+            // (1) Resolve owner UUID + server handle UNCONDITIONALLY/FIRST. The cached ownerUuid mirrors
+            // owner_uuid NBT/init, so it is non-null even when the owner is offline (when getOwner() is
+            // null). The ban must be writable regardless of owner presence (Non-negotiable #10).
             Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
+            UUID resolvedOwnerUuid = ownerPlayer != null ? ownerPlayer.getUUID() : this.ownerUuid;
+            MinecraftServer server = this.level().getServer();
+
+            // (2) Permadeath ban write — OUTSIDE the online-owner block so it runs offline too.
+            // Load per-player settings + resolve the effective lifecycle config through the single
+            // resolver (Non-negotiable #5). Default to ON auto-respawn / no permadeath if we cannot
+            // resolve an owner/server (degrade visibly via log, never crash).
+            boolean bannedThisDeath = false;
+            BotLifecycleSettings effective = null;
+            if (server != null && resolvedOwnerUuid != null) {
+                OwnerUserSettingsStorage.Snapshot perPlayer =
+                        OwnerUserSettingsStorage.load(server, resolvedOwnerUuid);
+                effective = BotLifecycleSettingsResolver.resolve(
+                        server, resolvedOwnerUuid, perPlayer.autoRespawn(), perPlayer.botPermadeath());
+                String characterId = this.character != null ? this.character.id() : null;
+                if (isPermadeathKill(damageSource) && effective.botPermadeath()
+                        && characterId != null && !characterId.isBlank()) {
+                    try {
+                        PermadeathBanStorage.addBan(server, resolvedOwnerUuid, characterId);
+                        bannedThisDeath = true;
+                    } catch (IOException e) {
+                        LOGGER.warn("Failed to write permadeath ban for owner {} character {}",
+                                resolvedOwnerUuid, characterId, e);
+                    }
+                }
+            } else {
+                LOGGER.warn("Bot died with no resolvable owner/server (ownerUuid={}, server={}); "
+                        + "skipping ban + respawn", resolvedOwnerUuid, server);
+            }
+
+            boolean banned = bannedThisDeath
+                    || (server != null && resolvedOwnerUuid != null && this.character != null
+                            && this.character.id() != null && !this.character.id().isBlank()
+                            && PermadeathBanStorage.isBanned(server, resolvedOwnerUuid, this.character.id()));
+            boolean autoRespawn = effective == null || effective.autoRespawn();
+
+            // (4) Dual-audience model feedback (DESIGN.md §3) — enqueue BEFORE despwnCompanion wipes
+            // the queue, so the model does not assume it respawned. Player chat is sent in (3).
             if (this.controller != null) {
+                if (banned) {
+                    AiConversationFeedback.enqueueInfo(this.controller,
+                            "You died permanently (hardcore permadeath) and cannot be summoned again in this world."
+                                    + " Do not claim you respawned.");
+                } else if (!autoRespawn) {
+                    AiConversationFeedback.enqueueInfo(this.controller,
+                            "You died and auto-respawn is disabled, so you were not respawned. The owner must summon you."
+                                    + " Do not claim you respawned.");
+                }
                 this.controller.stopWithRespawnNotification(
                         ownerPlayer instanceof ServerPlayer ownerSp0 ? ownerSp0 : null);
                 this.controller.unregisterFromGlobalRegistry();
             }
+
             ConversationManager.despwnCompanion(this.getUUID());
 
-            // Owner may be null (e.g. world reload before any player rejoined). Skip notification
-            // + auto-respawn when we have no live owner to attach the new companion to.
+            // (3) Player-facing messaging + respawn — requires an online owner. Choose EXACTLY ONE
+            // exclusive branch, banned-first short-circuit.
             if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
-                ownerSp.sendSystemMessage(
-                        Component.literal("Your companion " + this.character.shortName() + " died!"));
-                ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
-                CompanionManager.get(ownerSp).spawnCompanion(this.character);
+                if (banned) {
+                    // (a) banned: died permanently, no respawn, NO "use summon" line (it could never work).
+                    ownerSp.sendSystemMessage(Component.literal("Your companion " + this.character.shortName()
+                            + " died permanently (hardcore). It can no longer be summoned in this world."));
+                } else if (!autoRespawn) {
+                    // (b) auto-respawn OFF: no respawn; tell the player to summon it back.
+                    ownerSp.sendSystemMessage(Component.literal("Your companion " + this.character.shortName()
+                            + " died. Auto-respawn is off — use the companion menu / summon it to bring it back."));
+                } else {
+                    // (c) auto-respawn ON: existing behavior.
+                    ownerSp.sendSystemMessage(
+                            Component.literal("Your companion " + this.character.shortName() + " died!"));
+                    ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
+                    CompanionManager.get(ownerSp).spawnCompanion(this.character);
+                }
             }
         }
+    }
+
+    /**
+     * Permadeath-kill predicate (Non-negotiable #2, user-confirmed): any death that reaches {@code die()}
+     * is a kill. Deleted/despawned paths flow through {@code remove(RemovalReason != KILLED)} and never
+     * reach {@code die()}, so the method boundary alone is the kill-vs-delete discriminator. Must NOT be
+     * narrowed (no attacker check, no {@code DamageTypeTags.IS_PLAYER_ATTACK} - the latter is 1.21.1-only
+     * and would break parity).
+     */
+    private boolean isPermadeathKill(DamageSource damageSource) {
+        return true;
     }
 
     @Override

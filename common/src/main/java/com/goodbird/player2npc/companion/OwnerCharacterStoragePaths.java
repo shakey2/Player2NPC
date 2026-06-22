@@ -38,6 +38,8 @@ public final class OwnerCharacterStoragePaths {
 
     public static final String USER_SETTINGS_FILE_NAME = "user-settings.json";
 
+    public static final String PERMADEATH_BANS_FILE_NAME = "permadeath_bans.json";
+
     /** Server-wide username index; not under {@code owners/}. */
     public static final String SERVER_USERNAME_UUID_CACHE_FILE_NAME = "server_username_uuid_cache.json";
 
@@ -59,6 +61,10 @@ public final class OwnerCharacterStoragePaths {
 
     public static Path userSettingsFile(Path worldRoot, UUID ownerUuid) {
         return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(USER_SETTINGS_FILE_NAME);
+    }
+
+    public static Path permadeathBansFile(Path worldRoot, UUID ownerUuid) {
+        return ownersRoot(worldRoot).resolve(ownerUuid.toString()).resolve(PERMADEATH_BANS_FILE_NAME);
     }
 
     public static Path serverUsernameUuidCacheFile(Path worldRoot) {
