@@ -24,6 +24,8 @@ public final class OwnerUserSettingsStorage {
     public static final String KEY_USER_LIST_MODE = "userListMode";
     public static final String KEY_BOT_LIST_MODE = "botListMode";
     public static final String KEY_AUTO_EQUIP_ARMOR = "autoEquipArmor";
+    public static final String KEY_AUTO_RESPAWN = "autoRespawn";
+    public static final String KEY_BOT_PERMADEATH = "botPermadeath";
 
     public enum ListMode {
         BLACKLIST,
@@ -41,9 +43,10 @@ public final class OwnerUserSettingsStorage {
         }
     }
 
-    public record Snapshot(ListMode userListMode, ListMode botListMode, boolean autoEquipArmor) {
+    public record Snapshot(ListMode userListMode, ListMode botListMode, boolean autoEquipArmor,
+                           boolean autoRespawn, Boolean botPermadeath /* tri-state: null = unset */) {
         public static Snapshot defaults() {
-            return new Snapshot(ListMode.BLACKLIST, ListMode.BLACKLIST, true);
+            return new Snapshot(ListMode.BLACKLIST, ListMode.BLACKLIST, true, true, /*botPermadeath*/ null);
         }
     }
 
@@ -70,7 +73,13 @@ public final class OwnerUserSettingsStorage {
                     ? ListMode.fromJson(root.get(KEY_BOT_LIST_MODE).getAsString())
                     : ListMode.BLACKLIST;
             boolean autoEquip = !root.has(KEY_AUTO_EQUIP_ARMOR) || root.get(KEY_AUTO_EQUIP_ARMOR).getAsBoolean();
-            return new Snapshot(user, bot, autoEquip);
+            boolean autoRespawn = !root.has(KEY_AUTO_RESPAWN) || root.get(KEY_AUTO_RESPAWN).getAsBoolean();
+            // Tri-state: an absent key MUST stay null (unset) so the resolver's hardcore default applies.
+            // Never coerce absent -> false (Non-negotiable #6).
+            Boolean botPermadeath = root.has(KEY_BOT_PERMADEATH)
+                    ? root.get(KEY_BOT_PERMADEATH).getAsBoolean()
+                    : null;
+            return new Snapshot(user, bot, autoEquip, autoRespawn, botPermadeath);
         } catch (Exception e) {
             LOGGER.warn("Failed to load user settings at {}", path, e);
             return Snapshot.defaults();
@@ -96,6 +105,12 @@ public final class OwnerUserSettingsStorage {
         root.addProperty(KEY_USER_LIST_MODE, snapshot.userListMode().toJson());
         root.addProperty(KEY_BOT_LIST_MODE, snapshot.botListMode().toJson());
         root.addProperty(KEY_AUTO_EQUIP_ARMOR, snapshot.autoEquipArmor());
+        root.addProperty(KEY_AUTO_RESPAWN, snapshot.autoRespawn());
+        // Only write botPermadeath when explicitly set; leaving the key out keeps it unset (null),
+        // which the resolver maps to the world-hardcore default (Non-negotiable #6).
+        if (snapshot.botPermadeath() != null) {
+            root.addProperty(KEY_BOT_PERMADEATH, snapshot.botPermadeath());
+        }
         Files.writeString(path, GSON.toJson(root), StandardCharsets.UTF_8);
     }
 }
