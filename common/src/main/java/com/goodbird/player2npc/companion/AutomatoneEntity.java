@@ -81,13 +81,19 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
     }
 
     public void init() {
-        init(null);
+        init(null, SpawnReason.RETURNING, null);
+    }
+
+    public void init(Player companionOwner) {
+        init(companionOwner, SpawnReason.RETURNING, null);
     }
 
     /**
      * @param companionOwner when non-null, set on the controller before inventory/history load so owner-scoped paths resolve.
+     * @param reason         the spawn scenario; drives the single greeting/return/death dispatch below.
+     * @param deathCause     vanilla localized death message, only used for {@link SpawnReason#DEATH_RESPAWN}.
      */
-    public void init(Player companionOwner) {
+    public void init(Player companionOwner, SpawnReason reason, String deathCause) {
         this.setMaxUpStep(0.6F);
         this.setSpeed(0.4F);
         this.manager = new LivingEntityInteractionManager(this);
@@ -99,16 +105,48 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
                 this.controller.setOwner(companionOwner);
                 this.ownerUuid = companionOwner.getUUID();
             }
-            ConversationManager.sendGreeting(this.controller, this.character);
+            // Single greeting decision point (Q5 option (a)): FIRST_MEETING and RETURNING are handled
+            // identically here -- both call sendReturnMessage, which greets internally when the
+            // per-world history file does not yet exist (true first meeting), else emits "<owner> has
+            // respawned you". (No call site passes FIRST_MEETING today; see SpawnReason javadoc.)
+            // DEATH_RESPAWN injects the death cause so the revived bot answers truthfully (DESIGN.md §3).
+            switch (reason) {
+                case FIRST_MEETING:
+                case RETURNING:
+                    ConversationManager.sendReturnMessage(this.controller, this.character,
+                            ownerDisplayName(companionOwner));
+                    break;
+                case DEATH_RESPAWN:
+                    ConversationManager.sendDeathRevival(this.controller, this.character, deathCause);
+                    break;
+            }
             PersistentDataManager.loadInventory(this);
         }
 
     }
 
+    /**
+     * Resolve a model-facing owner display name without ever using {@code controller.getOwnerUsername()},
+     * which returns the sentinel "UNKNOWN OWNER" when no owner is attached (Q6/B1). Null owner -> "Your owner".
+     */
+    private String ownerDisplayName(Player companionOwner) {
+        if (companionOwner != null) {
+            return companionOwner.getName().getString();
+        }
+        if (this.controller != null && this.controller.getOwner() instanceof ServerPlayer sp) {
+            return sp.getName().getString();
+        }
+        return "Your owner";
+    }
+
     public AutomatoneEntity(Level world, Character character, Player owner) {
+        this(world, character, owner, SpawnReason.RETURNING, null);
+    }
+
+    public AutomatoneEntity(Level world, Character character, Player owner, SpawnReason reason, String deathCause) {
         super(Player2NPC.AUTOMATONE.get(), world);
         this.setCharacter(character);
-        this.init(owner);
+        this.init(owner, reason, deathCause);
     }
 
     public LivingEntityInventory getLivingInventory() {
@@ -139,7 +177,11 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
                 this.controller = new PlayerEngineController((IBaritone)IBaritone.KEY.get(this), this.character, "player2-ai-npc-minecraft");
             }
 
-            ConversationManager.sendGreeting(this.controller, this.character);
+            // Q2 = SILENT: restart / dimension-change / chunk-reload must emit NOTHING here. This path
+            // fires on every owner-far chunk reload and has no owner attached at this point (owner
+            // resolution is the block below), so any send would be spurious or a garbage owner name.
+            // The genuine "owner respawned you" return message fires only from the owner-online SPAWN
+            // call sites (CompanionManager.spawnCompanion -> init RETURNING).
         }
 
         // Restore controller owner from persisted UUID when possible. Owner may be offline; if so,
@@ -409,22 +451,27 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
                     ownerSp.sendSystemMessage(Component.literal("Your companion " + this.character.shortName()
                             + " died. Auto-respawn is off — use the companion menu / summon it to bring it back."));
                 } else {
-                    // (c) auto-respawn ON: existing behavior.
+                    // (c) auto-respawn ON: existing behavior + death context for the model.
                     ownerSp.sendSystemMessage(
                             Component.literal("Your companion " + this.character.shortName() + " died!"));
                     ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
-                    CompanionManager.get(ownerSp).spawnCompanion(this.character);
+                    // Pass DEATH_RESPAWN + vanilla death cause so init() on the new entity injects the
+                    // death context into its fresh queue (the dying entity's queue was wiped by
+                    // despwnCompanion above). Do not reorder the spawnCompanion internals
+                    // (CompanionManager L163-166); the enqueue happens inside init().
+                    String deathCause = damageSource.getLocalizedDeathMessage(this).getString();
+                    CompanionManager.get(ownerSp).spawnCompanion(this.character, SpawnReason.DEATH_RESPAWN, deathCause);
                 }
             }
         }
     }
 
     /**
-     * Permadeath-kill predicate (Non-negotiable #2, user-confirmed): any death that reaches {@code die()}
-     * is a kill. Deleted/despawned paths flow through {@code remove(RemovalReason != KILLED)} and never
-     * reach {@code die()}, so the method boundary alone is the kill-vs-delete discriminator. Must NOT be
-     * narrowed (no attacker check, no {@code DamageTypeTags.IS_PLAYER_ATTACK} - the latter is 1.21.1-only
-     * and would break parity).
+     * Whether a death reaching {@link #die(DamageSource)} counts as a permadeath kill. Per the plan
+     * (Non-negotiable #2, user-confirmed): ANY lethal damage that reaches {@code die()} is a kill —
+     * delete/despawn paths flow through {@code remove(RemovalReason != KILLED)} and never reach here,
+     * so the method boundary alone is the kill-vs-delete discriminator. Do NOT narrow to attacker
+     * deaths or use {@code DamageTypeTags.IS_PLAYER_ATTACK} (1.21.1-only; would break 1.20.1 parity).
      */
     private boolean isPermadeathKill(DamageSource damageSource) {
         return true;

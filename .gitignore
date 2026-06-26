@@ -27,3 +27,5 @@ classes/
 
 # Coding agent artifacts — branches are for build/code only, never agent instructions (see AGENTS.md)
 .claude/
+# Graphify code-graph output (knowledge graph for agents) — generated locally, never committed
+graphify-out/

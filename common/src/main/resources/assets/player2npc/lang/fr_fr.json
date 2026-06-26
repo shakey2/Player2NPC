@@ -1,0 +1,28 @@
+{
+  "_comment": "French (fr_FR) — STT permission system only. Partial file: Minecraft falls back to en_us for keys not listed here. Flagged entries need native-speaker review before release.",
+
+  "key.player2npc.open_character_screen": "Ouvrir l'écran des personnages",
+  "key.player2npc.stt_toggle": "Activer/désactiver la reconnaissance vocale",
+  "key.player2npc.tts_toggle": "Activer/désactiver la synthèse vocale",
+  "category.player2npc.keys": "Player2NPC",
+
+  "screen.player2npc.stt_consent.title": "Activer la saisie vocale (STT) ?",
+  "screen.player2npc.stt_consent.line1": "Maintenu, le raccourci STT démarre la reconnaissance vocale dans l'application Player2.",
+  "screen.player2npc.stt_consent.line2": "L'application Player2 utilise votre microphone pour la reconnaissance vocale lorsque le raccourci est maintenu.",
+  "screen.player2npc.stt_consent.line3": "Vous pouvez désactiver ou révoquer cela à tout moment via Paramètres vocaux.",
+  "screen.player2npc.stt_consent.line4": "En acceptant, vous consentez à la capture par microphone et à la transcription à distance.",
+  "screen.player2npc.stt_consent.accept": "Accepter et activer",
+  "screen.player2npc.stt_consent.decline": "Refuser",
+  "screen.player2npc.stt_consent.enabled_msg": "Saisie vocale (STT) activée. Maintenez le raccourci STT pour parler.",
+  "screen.player2npc.stt_consent.welcome_hint": "La saisie vocale (STT) est désactivée par défaut. Maintenez %1$s pour l'activer et donner votre consentement.",
+  "screen.player2npc.stt_consent.revoke": "Révoquer le consentement",
+  "screen.player2npc.stt_consent.close": "Fermer",
+  "screen.player2npc.stt_consent.revoked_msg": "Saisie vocale (STT) désactivée. Le consentement a été révoqué.",
+
+  "screen.player2npc.stt_settings.title": "Paramètres de saisie vocale (STT)",
+  "screen.player2npc.stt_settings.status_on": "La saisie vocale est activée.",
+  "screen.player2npc.stt_settings.revoke_hint": "Révoquer le consentement désactive la STT et efface votre opt-in.",
+  "screen.player2npc.stt_settings.revoke_hint2": "Vous pouvez la réactiver en maintenant à nouveau le raccourci STT.",
+
+  "screen.player2npc.character_selection.voice_settings": "Paramètres vocaux"
+}

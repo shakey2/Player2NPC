@@ -12,6 +12,7 @@
   "screen.player2npc.stt_consent.accept": "Accept & Enable",
   "screen.player2npc.stt_consent.decline": "Decline",
   "screen.player2npc.stt_consent.enabled_msg": "Voice input (STT) enabled. Hold the STT key to speak.",
+  "screen.player2npc.stt_consent.welcome_hint": "Voice input (STT) is off by default. Hold %s to enable and provide consent.",
   "screen.player2npc.stt_consent.revoke": "Revoke Consent",
   "screen.player2npc.stt_consent.close": "Close",
   "screen.player2npc.stt_consent.revoked_msg": "Voice input (STT) disabled. Consent has been revoked.",
