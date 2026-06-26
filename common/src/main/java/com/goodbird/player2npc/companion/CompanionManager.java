@@ -160,8 +160,12 @@ public class CompanionManager {
     }
 
     public void spawnCompanion(Character character){
+        spawnCompanion(character, SpawnReason.RETURNING, null);
+    }
+
+    public void spawnCompanion(Character character, SpawnReason reason, String deathCause){
         BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
-        AutomatoneEntity newCompanion = new AutomatoneEntity(this._player.level(), character, this._player);
+        AutomatoneEntity newCompanion = new AutomatoneEntity(this._player.level(), character, this._player, reason, deathCause);
         newCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
         this._player.level().addFreshEntity(newCompanion);
         this._companionMap.put(character.name(), newCompanion.getUUID());
