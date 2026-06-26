@@ -9,6 +9,7 @@ import com.player2.playerengine.player2api.Character;
 import com.goodbird.player2npc.Player2NPC;
 import com.goodbird.player2npc.network.AutomatonEquipmentSyncPacket;
 import com.goodbird.player2npc.network.AutomatonSpawnPacket;
+import com.player2.playerengine.FollowMode;
 import com.player2.playerengine.PlayerEngineController;
 import com.player2.playerengine.automaton.api.IBaritone;
 import com.player2.playerengine.automaton.api.entity.IAutomatone;
@@ -42,6 +43,7 @@ import java.io.IOException;
 import java.util.UUID;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Entity.RemovalReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
@@ -78,6 +80,14 @@ public class AutomatoneEntity extends LivingEntity
      * nothing new is persisted ({@code owner_uuid} already round-trips via NBT).
      */
     private UUID ownerUuid;
+    /**
+     * Persisted follow mode (WS2). Parsed in {@link #readAdditionalSaveData(CompoundTag)} and applied to the
+     * controller on whichever path builds it: the read-path construction (cold load) applies it immediately,
+     * while the spawn/teleport path applies it at the end of {@link #init(Player, SpawnReason, String)} (the
+     * controller does not exist when the NBT is read on that path). Defaults to {@code NORMAL} for fresh
+     * spawns and legacy/unknown saves.
+     */
+    private FollowMode pendingFollowMode = FollowMode.NORMAL;
 
     public AutomatoneEntity(EntityType<? extends AutomatoneEntity> type, Level world) {
         super(type, world);
@@ -126,6 +136,7 @@ public class AutomatoneEntity extends LivingEntity
                     break;
             }
             PersistentDataManager.loadInventory(this);
+            this.controller.setFollowMode(this.pendingFollowMode);
         }
 
     }
@@ -205,6 +216,24 @@ public class AutomatoneEntity extends LivingEntity
                 }
             }
         }
+
+        // WS2: restore persisted follow mode. Parse always (the only method handed the CompoundTag),
+        // guarding legacy/unknown values to NORMAL. Apply immediately if the controller already exists
+        // (cold-load read-path construction above); otherwise pendingFollowMode is applied when init(...)
+        // builds the controller on the spawn/teleport path.
+        FollowMode restored = FollowMode.NORMAL;
+        if (tag.contains("follow_mode")) {
+            String raw = tag.getString("follow_mode");
+            try {
+                restored = FollowMode.valueOf(raw);
+            } catch (IllegalArgumentException ignored) {
+                // legacy/unknown -> NORMAL
+            }
+        }
+        this.pendingFollowMode = restored;
+        if (this.controller != null) {
+            this.controller.setFollowMode(this.pendingFollowMode);
+        }
     }
 
     public void addAdditionalSaveData(CompoundTag tag) {
@@ -216,6 +245,9 @@ public class AutomatoneEntity extends LivingEntity
             CompoundTag compound = new CompoundTag();
             CharacterUtils.writeToNBT(compound, this.character);
             tag.put("character", compound);
+            if (this.controller != null) {
+                tag.putString("follow_mode", this.controller.getFollowMode().name());
+            }
         }
 
         if (this.controller != null && this.controller.getOwner() != null) {
