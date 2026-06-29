@@ -138,6 +138,7 @@ public class PersistentDataManager {
         try {
             if (entity == null || entity.controller == null) return;
             entity.controller.getAIPersistantData().saveHistoryNow();
+            entity.controller.getAIPersistantData().saveMoodNow();
         } catch (Exception e) {
             LOGGER.error("Error saving conversation history for " + (entity.character == null ? "UNKNOWN" : entity.character.name()), e);
         }
@@ -147,6 +148,7 @@ public class PersistentDataManager {
         try {
             if (entity == null || entity.controller == null) return;
             entity.controller.getAIPersistantData().reloadHistoryFromDisk();
+            entity.controller.getAIPersistantData().reloadMoodFromDisk();
         } catch (Exception e) {
             LOGGER.error("Error loading conversation history for " + (entity.character == null ? "UNKNOWN" : entity.character.name()), e);
         }
