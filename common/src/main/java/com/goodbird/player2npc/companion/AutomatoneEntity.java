@@ -179,6 +179,7 @@ public class AutomatoneEntity extends LivingEntity
 
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
+        this.hungerManager.readNbt(tag);
         if (tag.contains("head_yaw")) {
             this.yHeadRot = tag.getFloat("head_yaw");
         }
@@ -238,6 +239,7 @@ public class AutomatoneEntity extends LivingEntity
 
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
+        this.hungerManager.writeNbt(tag);
         tag.putFloat("head_yaw", this.yHeadRot);
         tag.put("Inventory", this.inventory.writeNbt(level().registryAccess(), new ListTag()));
         tag.putInt("SelectedItemSlot", this.inventory.selectedSlot);
@@ -278,6 +280,10 @@ public class AutomatoneEntity extends LivingEntity
 
         super.tick();
         this.updateSwingTime();
+        if (this.controller != null) {
+            this.hungerManager.setHungerEnabled(this.controller.getModSettings().isHungerEnabled());
+            this.hungerManager.setDeathByHungerMatchesDifficulty(this.controller.getModSettings().isDeathByHungerMatchesDifficulty());
+        }
         this.hungerManager.update(this);
     }
 
