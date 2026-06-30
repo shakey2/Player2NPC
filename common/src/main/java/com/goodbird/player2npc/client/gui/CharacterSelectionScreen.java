@@ -26,7 +26,7 @@ public class CharacterSelectionScreen extends Screen {
     private boolean isLoading = true;
 
     public CharacterSelectionScreen() {
-        super(Component.nullToEmpty("Available characters"));
+        super(Component.translatable("screen.player2npc.character_selection.title"));
     }
 
     protected void init() {
@@ -39,7 +39,7 @@ public class CharacterSelectionScreen extends Screen {
             this.minecraft.execute(this::createCharacterCards);
         }, this.minecraft);
 
-        this.addRenderableWidget(Button.builder(Component.nullToEmpty("Re-authentificate"), (button) -> {
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.player2npc.character_selection.reauthenticate"), (button) -> {
             CompletableFuture.runAsync(()-> {
                 TokenStorage.clearAllTokens();
                 AuthenticationManager.getInstance().checkAuth(minecraft.player, "player2-ai-npc-minecraft");
@@ -91,9 +91,9 @@ public class CharacterSelectionScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         this.renderBackground(graphics, mouseX, mouseY, delta);
         graphics.blit(ResourceLocation.bySeparator("player2npc:textures/gui/standardbg.png", ':'), (this.width-256)/2, (this.height-200)/2, 0, 0, 256, 256);
-        graphics.drawCenteredString(this.font, "Available characters", (this.width-256)/2+130, (this.height-200)/2+7, 16777215);
+        graphics.drawCenteredString(this.font, Component.translatable("screen.player2npc.character_selection.title"), (this.width-256)/2+130, (this.height-200)/2+7, 16777215);
         if (this.isLoading) {
-            graphics.drawCenteredString(this.font, "Loading...", this.width / 2, this.height / 2, 11184810);
+            graphics.drawCenteredString(this.font, Component.translatable("screen.player2npc.character_selection.loading"), this.width / 2, this.height / 2, 11184810);
         }
 
         super.render(graphics, mouseX, mouseY, delta);

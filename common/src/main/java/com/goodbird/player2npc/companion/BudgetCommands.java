@@ -95,8 +95,11 @@ public final class BudgetCommands {
             cfg.setSoftBudgetCallsPerWindow(calls);
             PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
         }
-        String msg = calls == 0 ? "AI call soft limit disabled." : "Soft limit set to " + calls + " calls per window.";
-        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        MutableComponent msgComp = (calls == 0
+                ? Component.translatable("command.player2npc.budget.soft.disabled")
+                : Component.translatable("command.player2npc.budget.soft.set", calls))
+                .withStyle(ChatFormatting.GREEN);
+        ctx.getSource().sendSuccess(() -> msgComp, false);
         return 1;
     }
 
@@ -113,8 +116,11 @@ public final class BudgetCommands {
             cfg.setHardBudgetCallsPerWindow(calls);
             PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
         }
-        String msg = calls == 0 ? "AI call hard limit disabled." : "Hard limit set to " + calls + " calls per window.";
-        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        MutableComponent msgComp = (calls == 0
+                ? Component.translatable("command.player2npc.budget.hard.disabled")
+                : Component.translatable("command.player2npc.budget.hard.set", calls))
+                .withStyle(ChatFormatting.GREEN);
+        ctx.getSource().sendSuccess(() -> msgComp, false);
         return 1;
     }
 
@@ -133,7 +139,7 @@ public final class BudgetCommands {
         }
         // Reset call window so new window starts from now
         BudgetTracker.reset(player.getUUID().toString());
-        ctx.getSource().sendSuccess(() -> Component.literal("Budget window set to " + minutes + " min. Call window reset.")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.window.set", minutes)
                 .withStyle(ChatFormatting.GREEN), false);
         return 1;
     }
@@ -151,8 +157,11 @@ public final class BudgetCommands {
             cfg.setSoftJoulesThreshold(joules);
             PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
         }
-        String msg = joules == 0 ? "Joules soft limit disabled." : "Joules soft limit set to " + joules + " Joules.";
-        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        MutableComponent msgComp = (joules == 0
+                ? Component.translatable("command.player2npc.budget.joules_soft.disabled")
+                : Component.translatable("command.player2npc.budget.joules_soft.set", joules))
+                .withStyle(ChatFormatting.GREEN);
+        ctx.getSource().sendSuccess(() -> msgComp, false);
         return 1;
     }
 
@@ -169,8 +178,11 @@ public final class BudgetCommands {
             cfg.setHardJoulesThreshold(joules);
             PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
         }
-        String msg = joules == 0 ? "Joules hard limit disabled." : "Joules hard limit set to " + joules + " Joules.";
-        ctx.getSource().sendSuccess(() -> Component.literal(msg).withStyle(ChatFormatting.GREEN), false);
+        MutableComponent msgComp = (joules == 0
+                ? Component.translatable("command.player2npc.budget.joules_hard.disabled")
+                : Component.translatable("command.player2npc.budget.joules_hard.set", joules))
+                .withStyle(ChatFormatting.GREEN);
+        ctx.getSource().sendSuccess(() -> msgComp, false);
         return 1;
     }
 
@@ -187,7 +199,7 @@ public final class BudgetCommands {
             cfg.setJoulesRefreshIntervalSeconds(seconds);
             PlayerBudgetConfigHolder.save(server, player.getUUID(), cfg);
         }
-        ctx.getSource().sendSuccess(() -> Component.literal("Joules refresh interval set to " + seconds + " seconds.")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.joules_refresh.set", seconds)
                 .withStyle(ChatFormatting.GREEN), false);
         return 1;
     }
@@ -197,8 +209,7 @@ public final class BudgetCommands {
         String key = player.getUUID().toString();
         BudgetTracker.reset(key);
         JoulesCache.invalidate(key);
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "Budget window and Joules cache reset. AI requests allowed again.")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.reset.success")
                 .withStyle(ChatFormatting.GREEN), false);
         return 1;
     }
@@ -214,65 +225,68 @@ public final class BudgetCommands {
                 : PlayerBudgetConfigHolder.load(server, player.getUUID());
         Optional<JoulesCache.JoulesSnapshot> snapOpt = JoulesCache.get(key);
 
-        MutableComponent header = Component.literal("=== Budget Status ===").withStyle(ChatFormatting.GOLD);
+        MutableComponent header = Component.translatable("command.player2npc.budget.status.header").withStyle(ChatFormatting.GOLD);
         ctx.getSource().sendSuccess(() -> header, false);
 
         String fileNote = serverFile ? "server_player2.json" : "player-budget.json";
-        ctx.getSource().sendSuccess(() -> Component.literal("Limits from: ")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_limits_from")
                 .withStyle(ChatFormatting.YELLOW)
                 .append(Component.literal(fileNote).withStyle(ChatFormatting.WHITE)), false);
 
-        ctx.getSource().sendSuccess(() -> Component.literal("Call limits: ")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_call_limits")
                 .withStyle(ChatFormatting.YELLOW)
-                .append(Component.literal(
-                        "soft=" + fmtLimit(cfg.getSoftBudgetCallsPerWindow())
-                        + " hard=" + fmtLimit(cfg.getHardBudgetCallsPerWindow())
-                        + " window=" + cfg.getBudgetWindowMinutes() + "min"
+                .append(Component.translatable("command.player2npc.budget.status.call_limits_value",
+                        fmtLimit(cfg.getSoftBudgetCallsPerWindow()),
+                        fmtLimit(cfg.getHardBudgetCallsPerWindow()),
+                        String.valueOf(cfg.getBudgetWindowMinutes())
                 ).withStyle(ChatFormatting.WHITE)), false);
 
-        ctx.getSource().sendSuccess(() -> Component.literal("Joules limits: ")
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_joules_limits")
                 .withStyle(ChatFormatting.YELLOW)
-                .append(Component.literal(
-                        "soft=" + fmtLimit(cfg.getSoftJoulesThreshold())
-                        + " hard=" + fmtLimit(cfg.getHardJoulesThreshold())
-                        + " refresh=" + cfg.getJoulesRefreshIntervalSeconds() + "s"
+                .append(Component.translatable("command.player2npc.budget.status.joules_limits_value",
+                        fmtLimit(cfg.getSoftJoulesThreshold()),
+                        fmtLimit(cfg.getHardJoulesThreshold()),
+                        String.valueOf(cfg.getJoulesRefreshIntervalSeconds())
                 ).withStyle(ChatFormatting.WHITE)), false);
 
         BudgetTracker.WindowSnapshot winSnap = BudgetTracker.statusSnapshot(cfg).get(key);
         if (winSnap != null) {
             long remaining = Math.max(0, winSnap.windowEndMs() - System.currentTimeMillis()) / 1000L;
-            ctx.getSource().sendSuccess(() -> Component.literal("Calls this window: ")
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_calls_window")
                     .withStyle(ChatFormatting.YELLOW)
-                    .append(Component.literal(
-                            winSnap.callCount() + " (window resets in ~" + remaining + "s)"
+                    .append(Component.translatable("command.player2npc.budget.status.calls_window_active",
+                            winSnap.callCount(), remaining
                     ).withStyle(ChatFormatting.WHITE)), false);
         } else {
-            ctx.getSource().sendSuccess(() -> Component.literal("Calls this window: ")
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_calls_window")
                     .withStyle(ChatFormatting.YELLOW)
-                    .append(Component.literal("0 (no window started)").withStyle(ChatFormatting.WHITE)), false);
+                    .append(Component.translatable("command.player2npc.budget.status.calls_window_none").withStyle(ChatFormatting.WHITE)), false);
         }
 
         if (snapOpt.isPresent()) {
             JoulesCache.JoulesSnapshot snap = snapOpt.get();
-            ctx.getSource().sendSuccess(() -> Component.literal("Joules (cached): ")
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_joules_cached")
                     .withStyle(ChatFormatting.YELLOW)
-                    .append(Component.literal(snap.joulesDisplay() + " Joules").withStyle(ChatFormatting.WHITE)), false);
+                    .append(Component.translatable("command.player2npc.budget.status.joules_display",
+                            snap.joulesDisplay()).withStyle(ChatFormatting.WHITE)), false);
             if (!snap.patronTier.isEmpty()) {
-                ctx.getSource().sendSuccess(() -> Component.literal("Patron tier: ")
+                ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_patron_tier")
                         .withStyle(ChatFormatting.YELLOW)
                         .append(Component.literal(snap.patronTier).withStyle(ChatFormatting.AQUA)), false);
             }
         } else {
-            ctx.getSource().sendSuccess(() -> Component.literal("Joules: ")
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.budget.status.label_joules")
                     .withStyle(ChatFormatting.YELLOW)
-                    .append(Component.literal("not yet fetched (will refresh on next AI call)")
+                    .append(Component.translatable("command.player2npc.budget.status.joules_unfetched")
                             .withStyle(ChatFormatting.GRAY)), false);
         }
 
         return 1;
     }
 
-    private static String fmtLimit(int val) {
-        return val == 0 ? "off" : String.valueOf(val);
+    private static Component fmtLimit(int val) {
+        return val == 0
+                ? Component.translatable("command.player2npc.budget.limit_off")
+                : Component.literal(String.valueOf(val));
     }
 }

@@ -44,13 +44,15 @@ public final class UserWhitelistCommands {
         MinecraftServer server = ctx.getSource().getServer();
         List<UserWhitelistStorage.Entry> entries = UserWhitelistStorage.load(server, self.getUUID());
         if (entries.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal("Your user whitelist is empty.").withStyle(ChatFormatting.GRAY), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.userwhitelist.list_empty").withStyle(ChatFormatting.GRAY), false);
             return 1;
         }
-        ctx.getSource().sendSuccess(() -> Component.literal("Your user whitelist (" + entries.size() + "):").withStyle(ChatFormatting.GOLD), false);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.userwhitelist.list_header", entries.size()).withStyle(ChatFormatting.GOLD), false);
         for (UserWhitelistStorage.Entry e : entries) {
-            String line = "- " + e.targetUsername() + (e.targetUuid() != null ? " [" + e.targetUuid() + "]" : "");
-            ctx.getSource().sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.YELLOW), false);
+            ctx.getSource().sendSuccess(() -> (e.targetUuid() != null
+                    ? Component.translatable("command.player2npc.userwhitelist.entry_with_uuid", e.targetUsername(), e.targetUuid())
+                    : Component.translatable("command.player2npc.userwhitelist.entry", e.targetUsername()))
+                    .withStyle(ChatFormatting.YELLOW), false);
         }
         return 1;
     }
@@ -60,7 +62,7 @@ public final class UserWhitelistCommands {
         MinecraftServer server = ctx.getSource().getServer();
         String username = StringArgumentType.getString(ctx, "username").trim();
         if (username.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.missing_username"));
             return 0;
         }
         Optional<UUID> targetUuid = BotBlacklistStorage.resolveTargetUuid(server, username);
@@ -70,10 +72,10 @@ public final class UserWhitelistCommands {
         list.add(entry);
         try {
             UserWhitelistStorage.save(server, self.getUUID(), list);
-            ctx.getSource().sendSuccess(() -> Component.literal("Added to user whitelist.").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.userwhitelist.add_success").withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -83,22 +85,22 @@ public final class UserWhitelistCommands {
         MinecraftServer server = ctx.getSource().getServer();
         String username = StringArgumentType.getString(ctx, "username").trim();
         if (username.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.missing_username"));
             return 0;
         }
         UserWhitelistStorage.Entry probe = new UserWhitelistStorage.Entry(username, null);
         List<UserWhitelistStorage.Entry> list = new ArrayList<>(UserWhitelistStorage.load(server, self.getUUID()));
         boolean removed = list.removeIf(e -> UserWhitelistStorage.key(e).equals(UserWhitelistStorage.key(probe)));
         if (!removed) {
-            ctx.getSource().sendFailure(Component.literal("No matching user whitelist entry."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.userwhitelist.remove_not_found"));
             return 0;
         }
         try {
             UserWhitelistStorage.save(server, self.getUUID(), list);
-            ctx.getSource().sendSuccess(() -> Component.literal("Removed from user whitelist.").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.userwhitelist.remove_success").withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }

@@ -27,21 +27,21 @@ public class CharacterDetailScreen extends Screen {
     private final Character character;
 
     public CharacterDetailScreen(Screen parent, Character character) {
-        super(Component.nullToEmpty("Character Details"));
+        super(Component.translatable("screen.player2npc.character_detail.title"));
         this.parent = parent;
         this.character = character;
     }
 
     protected void init() {
         super.init();
-        this.addRenderableWidget(Button.builder(Component.nullToEmpty("Summon"), (button) -> {
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.player2npc.character_detail.summon"), (button) -> {
             System.out.println("Summoning: " + this.character.name());
             NetworkManager.sendToServer(Player2NPC.SPAWN_REQUEST_PACKET_ID, AutomatoneSpawnRequestPacket.create(Minecraft.getInstance().level.registryAccess(), this.character));
             if (this.minecraft != null) {
                 this.minecraft.setScreen((Screen)null);
             }
         }).bounds((this.width-200)/2+10, (this.height-230)/2+170, 80, 20).build());
-        this.addRenderableWidget(Button.builder(Component.nullToEmpty("Despawn"), (button) -> {
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.player2npc.character_detail.despawn"), (button) -> {
             System.out.println("Summoning: " + this.character.name());
             NetworkManager.sendToServer(Player2NPC.DESPAWN_REQUEST_PACKET_ID, AutomatoneDespawnRequestPacket.create(Minecraft.getInstance().level.registryAccess(),this.character));
             if (this.minecraft != null) {
@@ -49,7 +49,7 @@ public class CharacterDetailScreen extends Screen {
             }
 
         }).bounds((this.width-200)/2+102, (this.height-230)/2+170, 80, 20).build());
-        this.addRenderableWidget(Button.builder(Component.nullToEmpty("Back"), (button) -> {
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.player2npc.character_detail.back"), (button) -> {
             if (this.minecraft != null) {
                 this.minecraft.setScreen(this.parent);
             }

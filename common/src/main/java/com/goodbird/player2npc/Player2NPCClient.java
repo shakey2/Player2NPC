@@ -75,11 +75,10 @@ public class Player2NPCClient {
         });
         ClientPlayerEvent.CLIENT_PLAYER_JOIN.register((player) -> {
             if (!ClientPersistence.getTTStatus()) {
-                player.sendSystemMessage(Component.literal("Welcome to Player2NPC!"));
-                player.sendSystemMessage(Component.literal(
-                        "To spawn a companion, press H. (Make sure you have at least one selected character at player2.game)"));
-                player.sendSystemMessage(Component.literal("To toggle text to speech (TTS), press ")
-                        .append(Component.keybind("key.player2npc.tts_toggle")));
+                player.sendSystemMessage(Component.translatable("message.player2npc.welcome.greeting"));
+                player.sendSystemMessage(Component.translatable("message.player2npc.welcome.spawn_hint"));
+                player.sendSystemMessage(Component.translatable("message.player2npc.welcome.tts_hint",
+                        Component.keybind("key.player2npc.tts_toggle")));
                 player.sendSystemMessage(Component.translatable("screen.player2npc.stt_consent.welcome_hint",
                         Component.keybind("key.player2npc.stt_toggle")));
                 ClientPersistence.saveTTSStatus(true);
@@ -93,7 +92,7 @@ public class Player2NPCClient {
             if (ttsEnableKeybind.consumeClick()) {
                 PlayerEngineClient.setTtsEnabled(!PlayerEngineClient.isTtsEnabled());
                 client.player.sendSystemMessage(
-                        Component.literal(PlayerEngineClient.isTtsEnabled() ? "Enabled TTS" : "Disabled TTS"));
+                        PlayerEngineClient.isTtsEnabled() ? Component.translatable("message.player2npc.tts.enabled") : Component.translatable("message.player2npc.tts.disabled"));
             }
 
             boolean sttIsDown = sttKeybind.isDown();
