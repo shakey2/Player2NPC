@@ -4,6 +4,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.player2.playerengine.help.ArgNote;
+import com.player2.playerengine.help.HelpEntry;
+import com.player2.playerengine.help.HelpRegistry;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +26,17 @@ public final class BotWhitelistCommands {
     }
 
     public static LiteralArgumentBuilder<CommandSourceStack> branch() {
+        HelpRegistry.register(new HelpEntry("player2npc", "botwhitelist list",
+                "/player2npc botwhitelist list", "help.player2npc.botwhitelist-list.short", null,
+                List.of(), 0, null, "lists"));
+        HelpRegistry.register(new HelpEntry("player2npc", "botwhitelist add",
+                "/player2npc botwhitelist add <username> [<character>]", "help.player2npc.botwhitelist-add.short", null,
+                List.of(new ArgNote("username", "help.player2npc.botwhitelist-add.arg.username"),
+                        new ArgNote("character", "help.player2npc.botwhitelist-add.arg.character")), 0, null, "lists"));
+        HelpRegistry.register(new HelpEntry("player2npc", "botwhitelist remove",
+                "/player2npc botwhitelist remove <username> [<character>]", "help.player2npc.botwhitelist-remove.short", null,
+                List.of(new ArgNote("username", "help.player2npc.botwhitelist-remove.arg.username"),
+                        new ArgNote("character", "help.player2npc.botwhitelist-remove.arg.character")), 0, null, "lists"));
         return Commands.literal("botwhitelist")
                 .then(Commands.literal("list").executes(BotWhitelistCommands::listEntries))
                 .then(Commands.literal("add")

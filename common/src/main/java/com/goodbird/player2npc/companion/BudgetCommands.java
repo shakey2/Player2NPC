@@ -5,6 +5,9 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.player2.playerengine.executor.BudgetTracker;
+import com.player2.playerengine.help.ArgNote;
+import com.player2.playerengine.help.HelpEntry;
+import com.player2.playerengine.help.HelpRegistry;
 import com.player2.playerengine.player2api.BudgetThresholdsResolver;
 import com.player2.playerengine.player2api.JoulesCache;
 import com.player2.playerengine.player2api.PlayerBudgetConfigHolder;
@@ -20,6 +23,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -45,6 +49,7 @@ public final class BudgetCommands {
     }
 
     public static LiteralArgumentBuilder<CommandSourceStack> branch() {
+        registerHelpEntries();
         return Commands.literal("budget")
                 .then(Commands.literal("soft")
                         .then(Commands.argument("calls", IntegerArgumentType.integer(0))
@@ -66,6 +71,34 @@ public final class BudgetCommands {
                                 .executes(ctx -> setJoulesRefresh(ctx, IntegerArgumentType.getInteger(ctx, "seconds")))))
                 .then(Commands.literal("reset").executes(BudgetCommands::reset))
                 .then(Commands.literal("status").executes(BudgetCommands::status));
+    }
+
+    /** Contributes a {@link HelpEntry} for every {@code /player2npc budget} leaf (all permission 0). */
+    private static void registerHelpEntries() {
+        HelpRegistry.register(new HelpEntry("player2npc", "budget soft",
+                "/player2npc budget soft <calls>", "help.player2npc.budget-soft.short", null,
+                List.of(new ArgNote("calls", "help.player2npc.budget-soft.arg.calls")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget hard",
+                "/player2npc budget hard <calls>", "help.player2npc.budget-hard.short", null,
+                List.of(new ArgNote("calls", "help.player2npc.budget-hard.arg.calls")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget window",
+                "/player2npc budget window <minutes>", "help.player2npc.budget-window.short", null,
+                List.of(new ArgNote("minutes", "help.player2npc.budget-window.arg.minutes")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget joules_soft",
+                "/player2npc budget joules_soft <joules>", "help.player2npc.budget-joules_soft.short", null,
+                List.of(new ArgNote("joules", "help.player2npc.budget-joules_soft.arg.joules")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget joules_hard",
+                "/player2npc budget joules_hard <joules>", "help.player2npc.budget-joules_hard.short", null,
+                List.of(new ArgNote("joules", "help.player2npc.budget-joules_hard.arg.joules")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget joules_refresh",
+                "/player2npc budget joules_refresh <seconds>", "help.player2npc.budget-joules_refresh.short", null,
+                List.of(new ArgNote("seconds", "help.player2npc.budget-joules_refresh.arg.seconds")), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget reset",
+                "/player2npc budget reset", "help.player2npc.budget-reset.short", null,
+                List.of(), 0, null, "budget"));
+        HelpRegistry.register(new HelpEntry("player2npc", "budget status",
+                "/player2npc budget status", "help.player2npc.budget-status.short", null,
+                List.of(), 0, null, "budget"));
     }
 
     private static ServerPlayer requirePlayer(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {

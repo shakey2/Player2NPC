@@ -2,9 +2,16 @@ package com.goodbird.player2npc.companion;
 
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.player2.playerengine.help.ArgNote;
+import com.player2.playerengine.help.HelpEntry;
+import com.player2.playerengine.help.HelpRegistry;
+import com.player2.playerengine.help.HelpRenderer;
+import com.player2.playerengine.help.HelpfulCommand;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -29,7 +36,9 @@ public final class CharacterStorageCommands {
      * (PlayerEngine's {@code playerengine} root requires level 2).
      */
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        registerStorageHelpEntries();
         dispatcher.register(Commands.literal("player2npc").requires(s -> s.hasPermission(0))
+                .then(helpLeaf())
                 .then(BotBlacklistCommands.branch())
                 .then(BotWhitelistCommands.branch())
                 .then(UserBlacklistCommands.branch())
@@ -67,6 +76,99 @@ public final class CharacterStorageCommands {
                                                 .executes(CharacterStorageCommands::listOp)))
                                         .then(Commands.literal("uuid").then(Commands.argument("uuid", StringArgumentType.string())
                                                 .executes(CharacterStorageCommands::listOpUuid)))))));
+    }
+
+    /**
+     * The self-documenting {@code /player2npc help} leaf. {@code help [page]} renders the index;
+     * {@code help <command> [page]} renders detail for one command. {@code <command>} is an English
+     * {@link StringArgumentType#greedyString()} — never translated, never routed to a model surface.
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> helpLeaf() {
+        return HelpfulCommand.leaf("player2npc", "help", "/player2npc help [command] [page]",
+                "help.player2npc.help.short", null,
+                List.of(new ArgNote("command", "help.player2npc.help.arg.command"),
+                        new ArgNote("page", "help.player2npc.help.arg.page")), 0, null, "general")
+                .executes(ctx -> {
+                    HelpRenderer.index("player2npc", 1, ctx.getSource());
+                    return 1;
+                })
+                .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                        .executes(ctx -> {
+                            HelpRenderer.index("player2npc", IntegerArgumentType.getInteger(ctx, "page"), ctx.getSource());
+                            return 1;
+                        }))
+                .then(Commands.argument("command", StringArgumentType.greedyString())
+                        .executes(CharacterStorageCommands::detailHelp));
+    }
+
+    /**
+     * Detail handler for {@code help <command> [page]}. Splits an optional trailing integer page off
+     * the greedy command string, then defers all rendering (and the bounded "unknown subcommand"
+     * reply) to {@link HelpRenderer}, which never echoes the raw input into a model-facing surface.
+     */
+    private static int detailHelp(CommandContext<CommandSourceStack> ctx) {
+        String raw = StringArgumentType.getString(ctx, "command").trim();
+        int page = 1;
+        int lastSpace = raw.lastIndexOf(' ');
+        if (lastSpace > 0) {
+            String tail = raw.substring(lastSpace + 1);
+            try {
+                int parsed = Integer.parseInt(tail);
+                if (parsed >= 1) {
+                    page = parsed;
+                    raw = raw.substring(0, lastSpace).trim();
+                }
+            } catch (NumberFormatException ignored) {
+                // No trailing page; treat the whole string as the command path.
+            }
+        }
+        HelpRenderer.detail("player2npc", raw, page, ctx.getSource());
+        return 1;
+    }
+
+    /**
+     * Contributes a {@link HelpEntry} for every {@code /player2npc storage} leaf. The canonical paths
+     * are the literal-only chains the {@code HelpCoverageVerifier} walks — the OP delete/list leaves
+     * are the {@code player}/{@code uuid} literals nested below the {@code <id>}/{@code <name>}/
+     * {@code <short>} argument nodes, so their paths end in those literals.
+     */
+    private static void registerStorageHelpEntries() {
+        // Self-service storage (permission 0).
+        HelpRegistry.register(new HelpEntry("player2npc", "storage delete id",
+                "/player2npc storage delete id <id>", "help.player2npc.storage-delete-id.short", null,
+                List.of(new ArgNote("id", "help.player2npc.storage-delete-id.arg.id")), 0, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage delete name",
+                "/player2npc storage delete name <name>", "help.player2npc.storage-delete-name.short", null,
+                List.of(new ArgNote("name", "help.player2npc.storage-delete-name.arg.name")), 0, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage delete short",
+                "/player2npc storage delete short <short>", "help.player2npc.storage-delete-short.short", null,
+                List.of(new ArgNote("short", "help.player2npc.storage-delete-short.arg.short")), 0, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage delete all",
+                "/player2npc storage delete all", "help.player2npc.storage-delete-all.short", null,
+                List.of(), 0, null, "storage"));
+
+        // Operator storage (permission 2).
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op delete id player",
+                "/player2npc storage op delete id <id> player <targets>", "help.player2npc.storage-op-delete-id-player.short", null,
+                List.of(new ArgNote("id", "help.player2npc.storage-op-delete-id-player.arg.id"),
+                        new ArgNote("targets", "help.player2npc.storage-op-delete-id-player.arg.targets")), 2, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op delete name player",
+                "/player2npc storage op delete name <name> player <targets>", "help.player2npc.storage-op-delete-name-player.short", null,
+                List.of(new ArgNote("name", "help.player2npc.storage-op-delete-name-player.arg.name"),
+                        new ArgNote("targets", "help.player2npc.storage-op-delete-name-player.arg.targets")), 2, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op delete short player",
+                "/player2npc storage op delete short <short> player <targets>", "help.player2npc.storage-op-delete-short-player.short", null,
+                List.of(new ArgNote("short", "help.player2npc.storage-op-delete-short-player.arg.short"),
+                        new ArgNote("targets", "help.player2npc.storage-op-delete-short-player.arg.targets")), 2, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op delete all player",
+                "/player2npc storage op delete all player <targets>", "help.player2npc.storage-op-delete-all-player.short", null,
+                List.of(new ArgNote("targets", "help.player2npc.storage-op-delete-all-player.arg.targets")), 2, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op list player",
+                "/player2npc storage op list player <targets>", "help.player2npc.storage-op-list-player.short", null,
+                List.of(new ArgNote("targets", "help.player2npc.storage-op-list-player.arg.targets")), 2, null, "storage"));
+        HelpRegistry.register(new HelpEntry("player2npc", "storage op list uuid",
+                "/player2npc storage op list uuid <uuid>", "help.player2npc.storage-op-list-uuid.short", null,
+                List.of(new ArgNote("uuid", "help.player2npc.storage-op-list-uuid.arg.uuid")), 2, null, "storage"));
     }
 
     private static ServerPlayer requireExecutorPlayer(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
