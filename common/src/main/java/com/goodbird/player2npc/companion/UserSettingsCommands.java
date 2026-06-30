@@ -54,11 +54,11 @@ public final class UserSettingsCommands {
         ServerPlayer self = requirePlayer(ctx);
         MinecraftServer server = ctx.getSource().getServer();
         OwnerUserSettingsStorage.Snapshot s = OwnerUserSettingsStorage.load(server, self.getUUID());
-        ctx.getSource().sendSuccess(() -> Component.literal("userListMode: ").withStyle(ChatFormatting.GOLD)
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.user_list_mode_label").withStyle(ChatFormatting.GOLD)
                 .append(Component.literal(s.userListMode().toJson()).withStyle(ChatFormatting.YELLOW)), false);
-        ctx.getSource().sendSuccess(() -> Component.literal("botListMode: ").withStyle(ChatFormatting.GOLD)
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.bot_list_mode_label").withStyle(ChatFormatting.GOLD)
                 .append(Component.literal(s.botListMode().toJson()).withStyle(ChatFormatting.YELLOW)), false);
-        ctx.getSource().sendSuccess(() -> Component.literal("autoEquipArmor (armor + weapon auto-equip): ").withStyle(ChatFormatting.GOLD)
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.auto_equip_label").withStyle(ChatFormatting.GOLD)
                 .append(Component.literal(String.valueOf(s.autoEquipArmor())).withStyle(ChatFormatting.YELLOW)), false);
 
         // Bot lifecycle: print RESOLVED effective values (through the single resolver, so show can
@@ -74,27 +74,35 @@ public final class UserSettingsCommands {
         Boolean chosenPermadeath = usesServer
                 ? Player2ServerConfigHolder.get().getServerBotPermadeath()
                 : s.botPermadeath();
-        String permadeathDetail = chosenPermadeath == null
-                ? (hardcore ? " (hardcore default)" : " (default — unset)")
-                : "";
+        Component permadeathDetailComp = chosenPermadeath == null
+                ? (hardcore
+                        ? Component.translatable("command.player2npc.user_settings.show.permadeath_detail_hardcore").withStyle(ChatFormatting.YELLOW)
+                        : Component.translatable("command.player2npc.user_settings.show.permadeath_detail_unset").withStyle(ChatFormatting.YELLOW))
+                : Component.empty();
 
-        String source;
-        if (usesServer) {
-            source = dedicated
-                    ? "server config (server override ON — your personal setting is not in effect)"
-                    : "server config (singleplayer / LAN)";
-        } else {
-            source = "your per-player config";
-        }
-        ctx.getSource().sendSuccess(() -> Component.literal("auto-respawn (effective): ").withStyle(ChatFormatting.GOLD)
-                .append(Component.literal(effective.autoRespawn() ? "ON" : "OFF").withStyle(ChatFormatting.YELLOW)), false);
-        ctx.getSource().sendSuccess(() -> Component.literal("bot-permadeath (effective): ").withStyle(ChatFormatting.GOLD)
-                .append(Component.literal((effective.botPermadeath() ? "ON" : "OFF") + permadeathDetail).withStyle(ChatFormatting.YELLOW)), false);
-        ctx.getSource().sendSuccess(() -> Component.literal("source: ").withStyle(ChatFormatting.GOLD)
-                .append(Component.literal(source).withStyle(ChatFormatting.AQUA)), false);
+        Component sourceComp = (usesServer
+                ? (dedicated
+                        ? Component.translatable("command.player2npc.user_settings.show.source_server_override")
+                        : Component.translatable("command.player2npc.user_settings.show.source_server_sp_lan"))
+                : Component.translatable("command.player2npc.user_settings.show.source_per_player"))
+                .withStyle(ChatFormatting.AQUA);
+
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.auto_respawn_label").withStyle(ChatFormatting.GOLD)
+                .append((effective.autoRespawn()
+                        ? Component.translatable("command.player2npc.user_settings.on")
+                        : Component.translatable("command.player2npc.user_settings.off"))
+                        .withStyle(ChatFormatting.YELLOW)), false);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.bot_permadeath_label").withStyle(ChatFormatting.GOLD)
+                .append((effective.botPermadeath()
+                        ? Component.translatable("command.player2npc.user_settings.on")
+                        : Component.translatable("command.player2npc.user_settings.off"))
+                        .withStyle(ChatFormatting.YELLOW)
+                        .append(permadeathDetailComp)), false);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.show.source_label").withStyle(ChatFormatting.GOLD)
+                .append(sourceComp), false);
         if (dedicated && overrideOn) {
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "Note: server override is ON; your personal auto-respawn / bot-permadeath settings are currently not in effect.")
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    "command.player2npc.user_settings.show.server_override_note")
                     .withStyle(ChatFormatting.GRAY), false);
         }
         return 1;
@@ -108,10 +116,10 @@ public final class UserSettingsCommands {
                 cur.userListMode(), cur.botListMode(), enabled, cur.autoRespawn(), cur.botPermadeath());
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
-            ctx.getSource().sendSuccess(() -> Component.literal("autoEquipArmor set to " + enabled + " (armor and main-hand weapon pickup auto-equip)").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.auto_equip_set", enabled).withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -123,10 +131,10 @@ public final class UserSettingsCommands {
         OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(mode, cur.botListMode(), cur.autoEquipArmor(), cur.autoRespawn(), cur.botPermadeath());
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
-            ctx.getSource().sendSuccess(() -> Component.literal("userListMode set to " + mode.toJson()).withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.user_list_mode_set", mode.toJson()).withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -138,10 +146,10 @@ public final class UserSettingsCommands {
         OwnerUserSettingsStorage.Snapshot next = new OwnerUserSettingsStorage.Snapshot(cur.userListMode(), mode, cur.autoEquipArmor(), cur.autoRespawn(), cur.botPermadeath());
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
-            ctx.getSource().sendSuccess(() -> Component.literal("botListMode set to " + mode.toJson()).withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.user_settings.bot_list_mode_set", mode.toJson()).withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -156,17 +164,18 @@ public final class UserSettingsCommands {
             // config — that is OP-only (level 2) per Non-negotiable #5 / WS7. Singleplayer / LAN (non-dedicated)
             // continues to allow level-0 writes, since there the server config IS the local player's config.
             if (server != null && server.isDedicatedServer() && !ctx.getSource().hasPermission(2)) {
-                ctx.getSource().sendFailure(Component.literal(
-                        "Editing server-level lifecycle settings on a dedicated server requires operator permission (level 2)."));
+                ctx.getSource().sendFailure(Component.translatable("command.player2npc.user_settings.server_lifecycle_op_required"));
                 return 0;
             }
             Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
             cfg.setServerAutoRespawn(enabled);
             Player2ServerConfigHolder.save();
             boolean overridden = server != null && server.isDedicatedServer();
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "auto-respawn set to " + (enabled ? "ON" : "OFF") + " (server config"
-                            + (overridden ? ", in effect via server override)" : ")"))
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    overridden ? "command.player2npc.user_settings.auto_respawn_set_server_override"
+                               : "command.player2npc.user_settings.auto_respawn_set_server",
+                    Component.translatable(enabled ? "command.player2npc.user_settings.on"
+                                                   : "command.player2npc.user_settings.off"))
                     .withStyle(ChatFormatting.GREEN), false);
             return 1;
         }
@@ -176,12 +185,15 @@ public final class UserSettingsCommands {
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
             boolean overrideOn = Player2ServerConfigHolder.get().isServerOverridesPlayerConfig();
-            ctx.getSource().sendSuccess(() -> Component.literal("auto-respawn set to " + (enabled ? "ON" : "OFF")
-                    + " (your per-player config)" + (overrideOn ? " — but server override is ON, so it is not currently in effect." : ""))
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    overrideOn ? "command.player2npc.user_settings.auto_respawn_set_player_override_on"
+                               : "command.player2npc.user_settings.auto_respawn_set_player",
+                    Component.translatable(enabled ? "command.player2npc.user_settings.on"
+                                                   : "command.player2npc.user_settings.off"))
                     .withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -197,17 +209,18 @@ public final class UserSettingsCommands {
             // config — that is OP-only (level 2) per Non-negotiable #5 / WS7. Singleplayer / LAN (non-dedicated)
             // continues to allow level-0 writes, since there the server config IS the local player's config.
             if (server != null && server.isDedicatedServer() && !ctx.getSource().hasPermission(2)) {
-                ctx.getSource().sendFailure(Component.literal(
-                        "Editing server-level lifecycle settings on a dedicated server requires operator permission (level 2)."));
+                ctx.getSource().sendFailure(Component.translatable("command.player2npc.user_settings.server_lifecycle_op_required"));
                 return 0;
             }
             Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
             cfg.setServerBotPermadeath(value);
             Player2ServerConfigHolder.save();
             boolean overridden = server != null && server.isDedicatedServer();
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "bot-permadeath set to " + (enabled ? "ON" : "OFF") + " (server config"
-                            + (overridden ? ", in effect via server override)" : ")"))
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    overridden ? "command.player2npc.user_settings.bot_permadeath_set_server_override"
+                               : "command.player2npc.user_settings.bot_permadeath_set_server",
+                    Component.translatable(enabled ? "command.player2npc.user_settings.on"
+                                                   : "command.player2npc.user_settings.off"))
                     .withStyle(ChatFormatting.GREEN), false);
             return 1;
         }
@@ -217,12 +230,15 @@ public final class UserSettingsCommands {
         try {
             OwnerUserSettingsStorage.saveSnapshot(server, self.getUUID(), next);
             boolean overrideOn = Player2ServerConfigHolder.get().isServerOverridesPlayerConfig();
-            ctx.getSource().sendSuccess(() -> Component.literal("bot-permadeath set to " + (enabled ? "ON" : "OFF")
-                    + " (your per-player config)" + (overrideOn ? " — but server override is ON, so it is not currently in effect." : ""))
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    overrideOn ? "command.player2npc.user_settings.bot_permadeath_set_player_override_on"
+                               : "command.player2npc.user_settings.bot_permadeath_set_player",
+                    Component.translatable(enabled ? "command.player2npc.user_settings.on"
+                                                   : "command.player2npc.user_settings.off"))
                     .withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.common.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -232,8 +248,9 @@ public final class UserSettingsCommands {
         Player2ServerRuntimeConfig cfg = Player2ServerConfigHolder.get();
         cfg.setServerOverridesPlayerConfig(enabled);
         Player2ServerConfigHolder.save();
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "server-override set to " + (enabled ? "ON (server config wins)" : "OFF (per-player config applies on dedicated servers)"))
+        ctx.getSource().sendSuccess(() -> Component.translatable(
+                enabled ? "command.player2npc.user_settings.server_override_set_on"
+                        : "command.player2npc.user_settings.server_override_set_off")
                 .withStyle(ChatFormatting.GREEN), false);
         return 1;
     }

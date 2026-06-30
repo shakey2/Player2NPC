@@ -46,30 +46,22 @@ public final class BotWhitelistCommands {
         MinecraftServer server = ctx.getSource().getServer();
         List<BotWhitelistStorage.Entry> entries = BotWhitelistStorage.load(server, self.getUUID());
         if (entries.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal("Your bot whitelist is empty.").withStyle(ChatFormatting.GRAY), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.botwhitelist.list_empty").withStyle(ChatFormatting.GRAY), false);
             return 1;
         }
-        ctx.getSource().sendSuccess(() -> Component.literal("Your bot whitelist (" + entries.size() + " entries):").withStyle(ChatFormatting.GOLD), false);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.botwhitelist.list_header", entries.size()).withStyle(ChatFormatting.GOLD), false);
         for (BotWhitelistStorage.Entry e : entries) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("- ").append(e.targetUsername());
+            final MutableComponent entryLine;
             if (e.allBots()) {
-                sb.append(" (all bots)");
+                entryLine = Component.translatable("command.player2npc.botlist.entry_all_bots", e.targetUsername()).withStyle(ChatFormatting.YELLOW);
+            } else if (e.characterId() != null && e.characterName() != null) {
+                entryLine = Component.translatable("command.player2npc.botlist.entry_by_id_and_name", e.targetUsername(), e.characterId(), e.characterName()).withStyle(ChatFormatting.YELLOW);
+            } else if (e.characterId() != null) {
+                entryLine = Component.translatable("command.player2npc.botlist.entry_by_id", e.targetUsername(), e.characterId()).withStyle(ChatFormatting.YELLOW);
             } else {
-                sb.append(" (character: ");
-                if (e.characterId() != null) {
-                    sb.append("id=").append(e.characterId());
-                }
-                if (e.characterName() != null) {
-                    if (e.characterId() != null) {
-                        sb.append(", ");
-                    }
-                    sb.append("name=").append(e.characterName());
-                }
-                sb.append(")");
+                entryLine = Component.translatable("command.player2npc.botlist.entry_by_name", e.targetUsername(), e.characterName()).withStyle(ChatFormatting.YELLOW);
             }
-            String line = sb.toString();
-            ctx.getSource().sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.YELLOW), false);
+            ctx.getSource().sendSuccess(() -> entryLine, false);
         }
         return 1;
     }
@@ -78,7 +70,7 @@ public final class BotWhitelistCommands {
         ServerPlayer self = requirePlayer(ctx);
         String username = StringArgumentType.getString(ctx, "username").trim();
         if (username.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.missing_username"));
             return 0;
         }
         Optional<UUID> targetUuid = BotWhitelistStorage.resolveTargetUuid(ctx.getSource().getServer(), username);
@@ -92,12 +84,12 @@ public final class BotWhitelistCommands {
         String username = StringArgumentType.getString(ctx, "username").trim();
         String characterRaw = StringArgumentType.getString(ctx, "character").trim();
         if (username.isEmpty() || characterRaw.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username or character."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.missing_username_or_character"));
             return 0;
         }
         Optional<UUID> targetOwnerUuid = BotWhitelistStorage.resolveTargetUuid(server, username);
         if (targetOwnerUuid.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Could not resolve player UUID for '" + username + "'. They must be online, in the profile cache, or have joined this world before (server_username_uuid_cache.json)."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.uuid_resolve_fail_detailed", username));
             return 0;
         }
         Optional<UUID> charUuid = parseUuidLenient(characterRaw);
@@ -116,11 +108,11 @@ public final class BotWhitelistCommands {
                 }
             }
             if (matches.isEmpty()) {
-                ctx.getSource().sendFailure(Component.literal("No stored character matched that name for " + username + "."));
+                ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.no_character_match", username));
                 return 0;
             }
             if (matches.size() > 1) {
-                MutableComponent msg = Component.literal("Ambiguous character name; ids: ").withStyle(ChatFormatting.RED);
+                MutableComponent msg = Component.translatable("command.player2npc.botlist.ambiguous_character").withStyle(ChatFormatting.RED);
                 for (String m : matches) {
                     msg.append(Component.literal(m + " ").withStyle(ChatFormatting.YELLOW));
                 }
@@ -150,10 +142,10 @@ public final class BotWhitelistCommands {
         list.add(entry);
         try {
             BotWhitelistStorage.save(server, self.getUUID(), list);
-            ctx.getSource().sendSuccess(() -> Component.literal("Added whitelist entry.").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.botwhitelist.added").withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.save_failed", e.getMessage()));
             return 0;
         }
     }
@@ -162,7 +154,7 @@ public final class BotWhitelistCommands {
         ServerPlayer self = requirePlayer(ctx);
         String username = StringArgumentType.getString(ctx, "username").trim();
         if (username.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.missing_username"));
             return 0;
         }
         BotWhitelistStorage.Entry probe = new BotWhitelistStorage.Entry(username, null, true, null, null);
@@ -175,12 +167,12 @@ public final class BotWhitelistCommands {
         String username = StringArgumentType.getString(ctx, "username").trim();
         String characterRaw = StringArgumentType.getString(ctx, "character").trim();
         if (username.isEmpty() || characterRaw.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing username or character."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.missing_username_or_character"));
             return 0;
         }
         Optional<UUID> targetOwnerUuid = BotWhitelistStorage.resolveTargetUuid(server, username);
         if (targetOwnerUuid.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Could not resolve player UUID for '" + username + "'."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.uuid_resolve_fail", username));
             return 0;
         }
         Optional<UUID> charUuid = parseUuidLenient(characterRaw);
@@ -198,7 +190,7 @@ public final class BotWhitelistCommands {
                 }
             }
             if (matches.size() != 1) {
-                ctx.getSource().sendFailure(Component.literal("Character name must match exactly one stored character to remove."));
+                ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.remove_ambiguous_character"));
                 return 0;
             }
             probe = new BotWhitelistStorage.Entry(username, targetOwnerUuid.map(UUID::toString).orElse(null), false, matches.get(0), characterRaw);
@@ -211,15 +203,15 @@ public final class BotWhitelistCommands {
         List<BotWhitelistStorage.Entry> list = new ArrayList<>(BotWhitelistStorage.load(server, self.getUUID()));
         boolean removed = list.removeIf(e -> BotWhitelistStorage.key(e).equals(key));
         if (!removed) {
-            ctx.getSource().sendFailure(Component.literal("No matching whitelist entry."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botwhitelist.no_match"));
             return 0;
         }
         try {
             BotWhitelistStorage.save(server, self.getUUID(), list);
-            ctx.getSource().sendSuccess(() -> Component.literal("Removed whitelist entry.").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.botwhitelist.removed").withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Save failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.botlist.save_failed", e.getMessage()));
             return 0;
         }
     }

@@ -85,7 +85,7 @@ public final class CharacterStorageCommands {
         ServerPlayer player = requireExecutorPlayer(ctx);
         String id = StringArgumentType.getString(ctx, "id").trim();
         if (id.isEmpty()) {
-            ctx.getSource().sendFailure(Component.literal("Missing character id."));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.storage.error.missing_id"));
             return 0;
         }
         return deleteForOwner(ctx.getSource(), player.getServer(), player.getUUID(), id);
@@ -108,10 +108,10 @@ public final class CharacterStorageCommands {
         try {
             CharacterStorageOperations.dismissAllAutomatonsForOwner(player);
             CharacterStorageOperations.deleteAllCharacterData(player.getServer(), player.getUUID());
-            ctx.getSource().sendSuccess(() -> Component.literal("Deleted all stored character data for you.").withStyle(ChatFormatting.GREEN), false);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.storage.delete_self.success_all").withStyle(ChatFormatting.GREEN), false);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Delete failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.storage.delete.error_io", e.getMessage()));
             return 0;
         }
     }
@@ -143,10 +143,10 @@ public final class CharacterStorageCommands {
                 CharacterStorageOperations.dismissAllAutomatonsForOwner(online);
             }
             CharacterStorageOperations.deleteAllCharacterData(server, owner);
-            ctx.getSource().sendSuccess(() -> Component.literal("Deleted all stored character data for " + owner + ".").withStyle(ChatFormatting.GREEN), true);
+            ctx.getSource().sendSuccess(() -> Component.translatable("command.player2npc.storage.delete_op.success_all", owner.toString()).withStyle(ChatFormatting.GREEN), true);
             return 1;
         } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Delete failed: " + e.getMessage()));
+            ctx.getSource().sendFailure(Component.translatable("command.player2npc.storage.delete.error_io", e.getMessage()));
             return 0;
         }
     }
@@ -156,11 +156,11 @@ public final class CharacterStorageCommands {
                 ? CharacterStorageOperations.findCharacterIdsByFullName(server, ownerUuid, query, false)
                 : CharacterStorageOperations.findCharacterIdsByShortName(server, ownerUuid, query, false);
         if (matches.isEmpty()) {
-            source.sendFailure(Component.literal("No stored character matched."));
+            source.sendFailure(Component.translatable("command.player2npc.storage.delete.error_no_match"));
             return 0;
         }
         if (matches.size() > 1) {
-            MutableComponent msg = Component.literal("Ambiguous match; character ids: ").withStyle(ChatFormatting.RED);
+            MutableComponent msg = Component.translatable("command.player2npc.storage.delete.error_ambiguous").withStyle(ChatFormatting.RED);
             for (String m : matches) {
                 msg.append(Component.literal(m + " ").withStyle(ChatFormatting.YELLOW));
             }
@@ -172,7 +172,7 @@ public final class CharacterStorageCommands {
 
     private static int deleteForOwner(CommandSourceStack source, MinecraftServer server, UUID ownerUuid, String characterId) {
         if (server == null) {
-            source.sendFailure(Component.literal("No server."));
+            source.sendFailure(Component.translatable("command.player2npc.storage.delete.error_no_server"));
             return 0;
         }
         boolean hadDir = java.nio.file.Files.isDirectory(CharacterStorageOperations.ownerDir(server, ownerUuid).resolve(characterId));
@@ -182,13 +182,13 @@ public final class CharacterStorageCommands {
                 CharacterStorageOperations.deleteCharacterData(server, ownerUuid, characterId);
             }
             if (hadDir) {
-                source.sendSuccess(() -> Component.literal("Deleted storage for character id: " + characterId).withStyle(ChatFormatting.GREEN), false);
+                source.sendSuccess(() -> Component.translatable("command.player2npc.storage.delete.success_by_id", characterId).withStyle(ChatFormatting.GREEN), false);
             } else {
-                source.sendSuccess(() -> Component.literal("Removed live companion if present; no data folder for that id.").withStyle(ChatFormatting.YELLOW), false);
+                source.sendSuccess(() -> Component.translatable("command.player2npc.storage.delete.success_no_data").withStyle(ChatFormatting.YELLOW), false);
             }
             return 1;
         } catch (IOException e) {
-            source.sendFailure(Component.literal("Delete failed: " + e.getMessage()));
+            source.sendFailure(Component.translatable("command.player2npc.storage.delete.error_io", e.getMessage()));
             return 0;
         }
     }
@@ -203,7 +203,7 @@ public final class CharacterStorageCommands {
         return CharacterStorageOperations.parseUuidLenient(u)
                 .map(uuid -> sendList(ctx.getSource(), ctx.getSource().getServer(), uuid))
                 .orElseGet(() -> {
-                    ctx.getSource().sendFailure(Component.literal("Invalid UUID."));
+                    ctx.getSource().sendFailure(Component.translatable("command.player2npc.storage.list.error_invalid_uuid"));
                     return 0;
                 });
     }
@@ -211,18 +211,18 @@ public final class CharacterStorageCommands {
     private static int sendList(CommandSourceStack source, MinecraftServer server, UUID ownerUuid) {
         List<CharacterStorageOperations.StoredCharacterRow> rows = CharacterStorageOperations.listStoredCharacters(server, ownerUuid);
         long totalBytes = CharacterStorageOperations.directorySizeBytes(CharacterStorageOperations.ownerDir(server, ownerUuid));
-        MutableComponent header = Component.literal("Stored characters: ").withStyle(ChatFormatting.GOLD).withStyle(ChatFormatting.BOLD);
+        MutableComponent header = Component.translatable("command.player2npc.storage.list.header").withStyle(ChatFormatting.GOLD).withStyle(ChatFormatting.BOLD);
         header.append(Component.literal(String.valueOf(rows.size())).withStyle(ChatFormatting.AQUA));
-        header.append(Component.literal("  Total disk (owners/" + ownerUuid + "): ").withStyle(ChatFormatting.GRAY));
+        header.append(Component.translatable("command.player2npc.storage.list.header_disk", ownerUuid.toString()).withStyle(ChatFormatting.GRAY));
         header.append(Component.literal(formatBytes(totalBytes)).withStyle(ChatFormatting.AQUA));
         source.sendSuccess(() -> header, false);
         for (CharacterStorageOperations.StoredCharacterRow row : rows) {
-            String line = String.format(Locale.ROOT, "%s | %s | %s | %s",
-                    row.characterId(), row.fullName(), row.shortName(), formatBytes(row.bytesOnDisk()));
-            source.sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.WHITE), false);
+            source.sendSuccess(() -> Component.translatable("command.player2npc.storage.list.row",
+                    row.characterId(), row.fullName(), row.shortName(), formatBytes(row.bytesOnDisk()))
+                    .withStyle(ChatFormatting.WHITE), false);
         }
         if (rows.isEmpty()) {
-            source.sendSuccess(() -> Component.literal("(no character folders)").withStyle(ChatFormatting.DARK_GRAY), false);
+            source.sendSuccess(() -> Component.translatable("command.player2npc.storage.list.empty").withStyle(ChatFormatting.DARK_GRAY), false);
         }
         return 1;
     }

@@ -54,8 +54,8 @@ public final class CompanionSpawnPolicy {
         // world (GUI/packet/join all route through denial()). Keyed on character.id() (Non-negotiable #3).
         String banId = characterIdOrEmpty(character);
         if (!banId.isEmpty() && PermadeathBanStorage.isBanned(player.getServer(), player.getUUID(), banId)) {
-            return Optional.of(Component.literal("Companion " + character.shortName()
-                    + " died permanently in this world and can no longer be summoned.")
+            return Optional.of(Component.translatable(
+                    "message.player2npc.spawn.denied_permadeath", character.shortName())
                     .withStyle(ChatFormatting.RED));
         }
         var cfg = Player2ServerConfigHolder.get();
@@ -64,7 +64,8 @@ public final class CompanionSpawnPolicy {
         int maxLive = cfg.getMaxSpawnedCompanionsPerPlayer();
         if ((intent == CompanionManager.SummonIntent.CREATE_NEW || intent == CompanionManager.SummonIntent.RESTORE_DESPAWNED)
                 && live >= maxLive) {
-            return Optional.of(Component.literal("Cannot spawn companion: at the server limit of " + maxLive + " active companions.")
+            return Optional.of(Component.translatable(
+                    "message.player2npc.spawn.denied_active_limit", maxLive)
                     .withStyle(ChatFormatting.RED));
         }
         int maxStored = cfg.getMaxStoredCharacterIdsPerPlayer();
@@ -73,8 +74,8 @@ public final class CompanionSpawnPolicy {
             if (!id.isEmpty()) {
                 Set<String> stored = listStoredCharacterIds(player.getServer(), player.getUUID());
                 if (!stored.contains(id) && stored.size() >= maxStored) {
-                    return Optional.of(Component.literal(
-                            "Cannot spawn companion: server character storage limit (" + maxStored + " ids) reached for new characters.")
+                    return Optional.of(Component.translatable(
+                            "message.player2npc.spawn.denied_storage_limit", maxStored)
                             .withStyle(ChatFormatting.RED));
                 }
             }
@@ -100,8 +101,8 @@ public final class CompanionSpawnPolicy {
             sorted.removeIf(c -> {
                 String id = characterIdOrEmpty(c);
                 if (!id.isEmpty() && bannedIds.contains(id)) {
-                    player.sendSystemMessage(Component.literal("Companion " + c.shortName()
-                            + " was not summoned — it died permanently in this world.")
+                    player.sendSystemMessage(Component.translatable(
+                            "message.player2npc.spawn.skipped_permadeath", c.shortName())
                             .withStyle(ChatFormatting.RED));
                     return true;
                 }

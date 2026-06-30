@@ -482,17 +482,18 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
             if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
                 if (banned) {
                     // (a) banned: died permanently, no respawn, NO "use summon" line (it could never work).
-                    ownerSp.sendSystemMessage(Component.literal("Your companion " + this.character.shortName()
-                            + " died permanently (hardcore). It can no longer be summoned in this world."));
+                    ownerSp.sendSystemMessage(Component.translatable(
+                            "message.player2npc.companion.died_permadeath", this.character.shortName()));
                 } else if (!autoRespawn) {
                     // (b) auto-respawn OFF: no respawn; tell the player to summon it back.
-                    ownerSp.sendSystemMessage(Component.literal("Your companion " + this.character.shortName()
-                            + " died. Auto-respawn is off — use the companion menu / summon it to bring it back."));
+                    ownerSp.sendSystemMessage(Component.translatable(
+                            "message.player2npc.companion.died_no_respawn", this.character.shortName()));
                 } else {
                     // (c) auto-respawn ON: existing behavior + death context for the model.
-                    ownerSp.sendSystemMessage(
-                            Component.literal("Your companion " + this.character.shortName() + " died!"));
-                    ownerSp.sendSystemMessage(Component.literal("It was respawned near you!"));
+                    ownerSp.sendSystemMessage(Component.translatable(
+                            "message.player2npc.companion.died", this.character.shortName()));
+                    ownerSp.sendSystemMessage(Component.translatable(
+                            "message.player2npc.companion.respawned_near"));
                     // Pass DEATH_RESPAWN + vanilla death cause so init() on the new entity injects the
                     // death context into its fresh queue (the dying entity's queue was wiped by
                     // despwnCompanion above). Do not reorder the spawnCompanion internals
