@@ -3,11 +3,14 @@ package com.goodbird.player2npc.companion;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.player2.playerengine.help.HelpEntry;
+import com.player2.playerengine.help.HelpRegistry;
 import com.player2.playerengine.player2api.BotLifecycleSettings;
 import com.player2.playerengine.player2api.BotLifecycleSettingsResolver;
 import com.player2.playerengine.player2api.config.Player2ServerConfigHolder;
 import com.player2.playerengine.player2api.config.Player2ServerRuntimeConfig;
 import java.io.IOException;
+import java.util.List;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -21,6 +24,7 @@ public final class UserSettingsCommands {
     }
 
     public static LiteralArgumentBuilder<CommandSourceStack> branch() {
+        registerHelpEntries();
         return Commands.literal("user-settings")
                 .then(Commands.literal("show").executes(UserSettingsCommands::show))
                 .then(Commands.literal("auto-equip")
@@ -44,6 +48,54 @@ public final class UserSettingsCommands {
                         .requires(s -> s.hasPermission(2))
                         .then(Commands.literal("on").executes(ctx -> setServerOverride(ctx, true)))
                         .then(Commands.literal("off").executes(ctx -> setServerOverride(ctx, false))));
+    }
+
+    /**
+     * Contributes a {@link HelpEntry} for every {@code /player2npc user-settings} leaf. The
+     * {@code auto-respawn}/{@code bot-permadeath} on/off leaves stay {@code permLevel=0} with a
+     * {@code permNoteKey} describing the dedicated + server-override caveat (Non-negotiable #7);
+     * {@code server-override} on/off is {@code permLevel=2}.
+     */
+    private static void registerHelpEntries() {
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings show",
+                "/player2npc user-settings show", "help.player2npc.user-settings-show.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings auto-equip on",
+                "/player2npc user-settings auto-equip on", "help.player2npc.user-settings-auto-equip-on.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings auto-equip off",
+                "/player2npc user-settings auto-equip off", "help.player2npc.user-settings-auto-equip-off.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings userlistmode blacklist",
+                "/player2npc user-settings userlistmode blacklist", "help.player2npc.user-settings-userlistmode-blacklist.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings userlistmode whitelist",
+                "/player2npc user-settings userlistmode whitelist", "help.player2npc.user-settings-userlistmode-whitelist.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings botlistmode blacklist",
+                "/player2npc user-settings botlistmode blacklist", "help.player2npc.user-settings-botlistmode-blacklist.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings botlistmode whitelist",
+                "/player2npc user-settings botlistmode whitelist", "help.player2npc.user-settings-botlistmode-whitelist.short", null,
+                List.of(), 0, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings auto-respawn on",
+                "/player2npc user-settings auto-respawn on", "help.player2npc.user-settings-auto-respawn-on.short", null,
+                List.of(), 0, "help.player2npc.user-settings-auto-respawn-on.perm", "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings auto-respawn off",
+                "/player2npc user-settings auto-respawn off", "help.player2npc.user-settings-auto-respawn-off.short", null,
+                List.of(), 0, "help.player2npc.user-settings-auto-respawn-off.perm", "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings bot-permadeath on",
+                "/player2npc user-settings bot-permadeath on", "help.player2npc.user-settings-bot-permadeath-on.short", null,
+                List.of(), 0, "help.player2npc.user-settings-bot-permadeath-on.perm", "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings bot-permadeath off",
+                "/player2npc user-settings bot-permadeath off", "help.player2npc.user-settings-bot-permadeath-off.short", null,
+                List.of(), 0, "help.player2npc.user-settings-bot-permadeath-off.perm", "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings server-override on",
+                "/player2npc user-settings server-override on", "help.player2npc.user-settings-server-override-on.short", null,
+                List.of(), 2, null, "settings"));
+        HelpRegistry.register(new HelpEntry("player2npc", "user-settings server-override off",
+                "/player2npc user-settings server-override off", "help.player2npc.user-settings-server-override-off.short", null,
+                List.of(), 2, null, "settings"));
     }
 
     private static ServerPlayer requirePlayer(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {

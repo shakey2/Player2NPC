@@ -4,6 +4,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.player2.playerengine.help.ArgNote;
+import com.player2.playerengine.help.HelpEntry;
+import com.player2.playerengine.help.HelpRegistry;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +29,15 @@ public final class UserBlacklistCommands {
     }
 
     public static LiteralArgumentBuilder<CommandSourceStack> branch() {
+        HelpRegistry.register(new HelpEntry("player2npc", "userblacklist list",
+                "/player2npc userblacklist list", "help.player2npc.userblacklist-list.short", null,
+                List.of(), 0, null, "lists"));
+        HelpRegistry.register(new HelpEntry("player2npc", "userblacklist add",
+                "/player2npc userblacklist add <username>", "help.player2npc.userblacklist-add.short", null,
+                List.of(new ArgNote("username", "help.player2npc.userblacklist-add.arg.username")), 0, null, "lists"));
+        HelpRegistry.register(new HelpEntry("player2npc", "userblacklist remove",
+                "/player2npc userblacklist remove <username>", "help.player2npc.userblacklist-remove.short", null,
+                List.of(new ArgNote("username", "help.player2npc.userblacklist-remove.arg.username")), 0, null, "lists"));
         return Commands.literal("userblacklist")
                 .then(Commands.literal("list").executes(UserBlacklistCommands::listEntries))
                 .then(Commands.literal("add")
