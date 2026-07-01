@@ -53,7 +53,6 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
@@ -292,7 +291,11 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
     }
 
     public void pickupItems() {
-        if (!this.level().isClientSide && this.isAlive() && !this.dead && this.level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) {
+        // NOTE: pickup of the owner's drops must NOT be gated on the mobGriefing gamerule.
+        // mobGriefing controls mob block/world modification (creepers, endermen); servers commonly
+        // set it false, which previously silently disabled the companion's passive item pickup
+        // forever. Keep only the server-side / alive / not-dead guards.
+        if (!this.level().isClientSide && this.isAlive() && !this.dead) {
             Vec3i vec3i = new Vec3i(3, 3, 3);
 
             for(ItemEntity itemEntity : this.level().getEntitiesOfClass(ItemEntity.class, this.getBoundingBox().inflate((double)vec3i.getX(), (double)vec3i.getY(), (double)vec3i.getZ()))) {
