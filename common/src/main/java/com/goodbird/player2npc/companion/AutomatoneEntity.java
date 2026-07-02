@@ -24,6 +24,7 @@ import com.player2.playerengine.multiversion.equip.WeaponVer;
 import com.player2.playerengine.player2api.AiConversationFeedback;
 import com.player2.playerengine.player2api.BotLifecycleSettings;
 import com.player2.playerengine.player2api.BotLifecycleSettingsResolver;
+import com.player2.playerengine.player2api.KeepInventoryResolver;
 import com.player2.playerengine.player2api.manager.ConversationManager;
 import com.player2.playerengine.player2api.utils.CharacterUtils;
 import net.minecraft.core.Vec3i;
@@ -53,6 +54,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
@@ -411,6 +413,13 @@ public class AutomatoneEntity extends LivingEntity implements IAutomatone, IInve
 
     @Override
     protected void dropAllDeathLoot(DamageSource damageSource) {
+        boolean keep = KeepInventoryResolver.effectiveKeep(
+                level().getGameRules().getBoolean(GameRules.RULE_KEEPINVENTORY));
+        if (keep) {
+            // KEEP: return before super (suppresses super's loot-table + XP drops) AND before
+            // inventory.dropAll() (the ONLY thing that drops the bot's items/equipment). Inventory persists intact.
+            return;
+        }
         super.dropAllDeathLoot(damageSource);
         inventory.dropAll();
     }
