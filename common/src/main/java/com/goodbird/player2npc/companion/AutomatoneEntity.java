@@ -135,6 +135,11 @@ public class AutomatoneEntity extends LivingEntity
                 case DEATH_RESPAWN:
                     ConversationManager.sendDeathRevival(this.controller, this.character, deathCause);
                     break;
+                case DIMENSION_RELOCATE:
+                    // Intentionally silent. A cross-dimension relocate (dismiss+respawn because MC
+                    // moveTo cannot cross levels) must NOT emit a greeting/return message — otherwise
+                    // walking through a portal would spam "<owner> has respawned you" every time.
+                    break;
             }
             PersistentDataManager.loadInventory(this);
             this.controller.setFollowMode(this.pendingFollowMode);
@@ -277,6 +282,11 @@ public class AutomatoneEntity extends LivingEntity
         ++this.attackStrengthTicker;
         if (!this.level().isClientSide && this.controller != null && this.isAlive()) {
             this.controller.serverTick();
+            // Throttled, in-memory-only last-known location hint (dimension-generic). Lets
+            // CompanionManager positively confirm a merely-unloaded companion before spawning a clone.
+            if ((this.tickCount % 100) == 0) {
+                CompanionLocationTracker.record(this.getUUID(), this.level().dimension(), this.blockPosition());
+            }
         }
 
         super.tick();
@@ -398,6 +408,15 @@ public class AutomatoneEntity extends LivingEntity
         }
 
         AutomatonEquipmentSyncPacket.broadcast(this);
+    }
+
+    /**
+     * The owner UUID mirrored in memory (see {@link #ownerUuid}). Survives an offline owner (unlike
+     * {@code controller.getOwner()}, which is null then). Used by the companion-cleanup command to
+     * attribute a loaded entity to a player without depending on an attached controller/owner.
+     */
+    public UUID getOwnerUuid() {
+        return this.ownerUuid;
     }
 
     public Character getCharacter() {
@@ -544,6 +563,14 @@ public class AutomatoneEntity extends LivingEntity
 
     @Override
     public void remove(RemovalReason reason) {
+        // Location-hint lifecycle chokepoint: clear the tracker hint ONLY on a terminal removal
+        // (reason.shouldDestroy() — KILLED / DISCARDED). A chunk-unload (UNLOADED_TO_CHUNK) or dimension
+        // change must PRESERVE the hint — that is precisely the merely-unloaded state the hint exists to
+        // rescue. Clearing it here on terminal removal is what makes "hint present == companion alive but
+        // possibly unloaded" a reliable signal for classifySummon / dismiss / resolveViaLocationHint.
+        if (reason.shouldDestroy()) {
+            CompanionLocationTracker.clear(this.getUUID());
+        }
         // On death, die() has already run the full cleanup (saveInventory +
         // stopWithRespawnNotification + unregisterFromGlobalRegistry + despwnCompanion).
         // MC 1.21.1 LivingEntity.die() does not remove immediately; the entity lingers for

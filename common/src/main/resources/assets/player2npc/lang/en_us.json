@@ -42,6 +42,7 @@
   "message.player2npc.companion.died_no_respawn": "Your companion %s died. Auto-respawn is off — use the companion menu / summon it to bring it back.",
   "message.player2npc.companion.died": "Your companion %s died!",
   "message.player2npc.companion.respawned_near": "It was respawned near you!",
+  "message.player2npc.companion.relocate_failed": "%s couldn't return to you — try summoning again.",
 
   "message.player2npc.spawn.denied_permadeath": "Companion %s died permanently in this world and can no longer be summoned.",
   "message.player2npc.spawn.denied_active_limit": "Cannot spawn companion: at the server limit of %s active companions.",
@@ -135,6 +136,13 @@
   "command.player2npc.storage.list.header_disk": "  Total disk (owners/%s): ",
   "command.player2npc.storage.list.row": "%1$s | %2$s | %3$s | %4$s",
   "command.player2npc.storage.list.empty": "(no character folders)",
+
+  "command.player2npc.cleanup.success_none": "No duplicate companion clones found.",
+  "command.player2npc.cleanup.success_removed": "Removed %s duplicate companion clone(s).",
+  "command.player2npc.cleanup.success_removed_named": "Removed %1$s duplicate companion clone(s) for %2$s.",
+  "command.player2npc.cleanup.success_all_summary": "Cleaned up duplicate companion clones for %1$s online player(s); removed %2$s total.",
+  "command.player2npc.cleanup.error_no_server": "No server.",
+  "command.player2npc.cleanup.error_offline": "That player is not online; their companion state cannot be safely checked while offline.",
 
   "command.player2npc.budget.soft.disabled": "AI call soft limit disabled.",
   "command.player2npc.budget.soft.set": "Soft limit set to %s calls per window.",
@@ -253,5 +261,13 @@
   "help.player2npc.budget-joules_refresh.short": "Set how often the cached Joules balance is refreshed.",
   "help.player2npc.budget-joules_refresh.arg.seconds": "Refresh interval in seconds (60-86400).",
   "help.player2npc.budget-reset.short": "Reset your budget window and cached Joules balance.",
-  "help.player2npc.budget-status.short": "Show your current budget limits and usage."
+  "help.player2npc.budget-status.short": "Show your current budget limits and usage.",
+
+  "help.player2npc.cleanup-clones.short": "Remove your own duplicate companion clones left behind by a dimension-change bug.",
+  "help.player2npc.cleanup-clones.long": "Scans every loaded dimension for a second copy of one of your companions that was accidentally spawned when you changed dimension. Only removes a clone that is loaded, provably not your active companion, and not currently running a task — your real companion and any companion that is merely out of a loaded chunk are never touched.",
+  "help.player2npc.cleanup-clones-player.short": "Operator: remove another player's duplicate companion clones.",
+  "help.player2npc.cleanup-clones-player.long": "Same safety rules as the self version, scoped to the named player's squad instead of your own. The target must be online.",
+  "help.player2npc.cleanup-clones-player.arg.targets": "The owning player whose duplicate companion clones are removed.",
+  "help.player2npc.cleanup-clones-all.short": "Operator: remove duplicate companion clones for every online player.",
+  "help.player2npc.cleanup-clones-all.long": "Runs the clone cleanup once per currently online player. Offline players are skipped (their canonical companion mapping cannot be safely resolved while they are offline)."
 }
