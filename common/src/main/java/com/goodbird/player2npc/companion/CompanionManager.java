@@ -444,6 +444,37 @@ public class CompanionManager {
         }
     }
 
+    /**
+     * Owner-scoped count of this player's companions that are currently LIVE for spawn-cap purposes.
+     * Unlike {@link #getActiveCompanions()} (which enumerates only entities loaded in some level via
+     * {@link ServerLevel#getEntity}), this is hint-aware: a canonical companion counts as live if it is
+     * EITHER loaded-and-alive in any dimension OR has a live {@link CompanionLocationTracker} hint — the
+     * exact "alive-but-unloaded, will relocate not clone" signal {@link #classifySummon} already treats as
+     * TELEPORT_ALIVE (the hint is cleared only at terminal removal, never on a mere chunk unload). This
+     * closes the follow-up noted in bugfixing-logs/2026-07-03-companion-cross-dimension-clone.md, where a
+     * companion temporarily unloaded in another dimension was undercounted, letting a different character be
+     * summoned on top of it past the configured cap.
+     *
+     * <p>Iterates {@code this._companionMap} once per character NAME, so a companion that is simultaneously
+     * loaded AND hinted contributes exactly 1 (single OR, never a sum). Owner-scoped by construction — only
+     * this manager's map is consulted, never another owner's companions.
+     */
+    public int getLiveCompanionCount() {
+        if (this._player.getServer() == null) {
+            return 0;
+        }
+        int count = 0;
+        for (UUID uuid : this._companionMap.values()) {
+            Located located = this.resolveLoadedCompanion(uuid);
+            boolean live = (located != null && located.entity().isAlive())
+                    || CompanionLocationTracker.get(uuid) != null;
+            if (live) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     public void serverTick() {
         if (this._needsToSummon && !this._assignedCharacters.isEmpty()) {
             this.summonCompanions();

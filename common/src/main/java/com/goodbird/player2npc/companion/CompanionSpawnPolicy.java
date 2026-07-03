@@ -61,7 +61,7 @@ public final class CompanionSpawnPolicy {
         }
         var cfg = Player2ServerConfigHolder.get();
         CompanionManager.SummonIntent intent = mgr.classifySummon(character);
-        int live = mgr.getActiveCompanions().size();
+        int live = mgr.getLiveCompanionCount();
         int maxLive = cfg.getMaxSpawnedCompanionsPerPlayer();
         if ((intent == CompanionManager.SummonIntent.CREATE_NEW || intent == CompanionManager.SummonIntent.RESTORE_DESPAWNED)
                 && live >= maxLive) {
@@ -117,7 +117,7 @@ public final class CompanionSpawnPolicy {
                 })
                 .thenComparing(CompanionSpawnPolicy::characterIdOrEmpty));
         List<Character> out = new ArrayList<>();
-        int virtualLive = mgr.getActiveCompanions().size();
+        int virtualLive = mgr.getLiveCompanionCount();
         Set<String> virtualStored = new HashSet<>(storedOnDisk);
         for (Character c : sorted) {
             CompanionManager.SummonIntent intent = mgr.classifySummon(c);
