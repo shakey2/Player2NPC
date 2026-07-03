@@ -422,6 +422,16 @@ public class CompanionManager {
         writeToNbt();
     }
 
+    /**
+     * The owner's loaded companion entities (alive, resolved across all levels). Returns the actual
+     * {@link AutomatoneEntity} objects, so by nature it can only ever include companions whose chunk is
+     * currently loaded — an alive-but-unloaded companion has no entity object to return and is omitted.
+     *
+     * <p>Do NOT use {@code getActiveCompanions().size()} for spawn-cap or liveness decisions: it
+     * undercounts a live-but-unloaded companion (the bug fixed on 2026-07-03). Use
+     * {@link #getLiveCompanionCount()} for any count/cap check. This method is kept only for callers that
+     * need the real loaded entity objects.
+     */
     public List<AutomatoneEntity> getActiveCompanions() {
         List<AutomatoneEntity> companions = new ArrayList();
         if (this._player.getServer() == null) {
