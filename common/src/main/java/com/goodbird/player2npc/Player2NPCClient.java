@@ -1,11 +1,12 @@
 package com.goodbird.player2npc;
 
-import com.goodbird.player2npc.client.gui.CharacterSelectionScreen;
+import com.goodbird.player2npc.client.gui.Player2NpcHubScreen;
 import com.goodbird.player2npc.client.gui.SttConsentScreen;
 import com.goodbird.player2npc.client.render.RenderAutomaton;
 import com.goodbird.player2npc.client.util.ClientPersistence;
 import com.goodbird.player2npc.network.AutomatonEquipmentSyncPacket;
 import com.goodbird.player2npc.network.AutomatonSpawnPacket;
+import com.goodbird.player2npc.network.GuiSnapshotPacket;
 import com.mojang.blaze3d.platform.InputConstants.Type;
 import com.player2.playerengine.PlayerEngineClient;
 import com.player2.playerengine.player2api.ChatclefConfigPersistantState;
@@ -44,6 +45,7 @@ public class Player2NPCClient {
         KeyMappingRegistry.register(openCharacterScreenKeybind);
         KeyMappingRegistry.register(ttsEnableKeybind);
         KeyMappingRegistry.register(sttKeybind);
+        ClientPersistence.preloadTTSStatus();
         NetworkManager.registerReceiver(NetworkManager.Side.S2C, Player2NPC.SPAWN_PACKET_ID, (buf, context) -> {
             AutomatonSpawnPacket packet = new AutomatonSpawnPacket(buf);
             context.queue(() -> {
@@ -73,6 +75,10 @@ public class Player2NPCClient {
                 }
             });
         });
+        NetworkManager.registerReceiver(NetworkManager.Side.S2C, Player2NPC.GUI_SNAPSHOT_PACKET_ID, (buf, context) -> {
+            GuiSnapshotPacket packet = new GuiSnapshotPacket(buf);
+            context.queue(() -> Player2NpcHubScreen.acceptSnapshot(packet));
+        });
         ClientPlayerEvent.CLIENT_PLAYER_JOIN.register((player) -> {
             if (!ClientPersistence.getTTStatus()) {
                 player.sendSystemMessage(Component.translatable("message.player2npc.welcome.greeting"));
@@ -87,7 +93,7 @@ public class Player2NPCClient {
         });
         ClientTickEvent.CLIENT_POST.register((client) -> {
             if (openCharacterScreenKeybind.consumeClick() && client.level != null) {
-                client.setScreen(new CharacterSelectionScreen());
+                client.setScreen(new Player2NpcHubScreen());
             }
             if (ttsEnableKeybind.consumeClick()) {
                 PlayerEngineClient.setTtsEnabled(!PlayerEngineClient.isTtsEnabled());

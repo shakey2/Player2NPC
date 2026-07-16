@@ -82,15 +82,19 @@ public final class AutomatonEquipmentSyncPacket {
 
     private static CompoundTag saveStackForSync(RegistryAccess access, ItemStack stack) {
 
-        CompoundTag tag = new CompoundTag();
-
         if (stack != null && !stack.isEmpty()) {
 
-            stack.save(access, tag);
+            Tag saved = stack.save(access, new CompoundTag());
+
+            if (saved instanceof CompoundTag compoundTag) {
+
+                return compoundTag;
+
+            }
 
         }
 
-        return tag;
+        return new CompoundTag();
 
     }
 

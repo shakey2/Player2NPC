@@ -6,7 +6,9 @@
 package com.goodbird.player2npc.companion;
 
 import com.goodbird.player2npc.mixins.IEntityPersistentData;
+import com.player2.playerengine.agentic.AgenticRunRegistry;
 import com.player2.playerengine.player2api.Character;
+import com.player2.playerengine.player2api.AiConversationFeedback;
 import com.player2.playerengine.player2api.manager.ConversationManager;
 import com.player2.playerengine.player2api.utils.CharacterUtils;
 import java.util.ArrayList;
@@ -16,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,26 +51,119 @@ public class CompanionManager {
     /**
      * Companions whose async chunk+entity reload we have kicked off (a hinted, merely-unloaded companion
      * cannot be surfaced synchronously — entity deserialization completes on a later entityManager tick).
-     * Retried each {@link #serverTick()} until the entity loads (then relocate/TP, never clone) or the hint
-     * proves stale after {@link #MAX_RELOAD_RETRY_TICKS} (then spawn a genuine replacement). Keyed by
-     * character name to mirror {@link #_companionMap}.
+     * Retried each {@link #serverTick()} until the entity loads or the hint proves stale after
+     * {@link #MAX_RELOAD_RETRY_TICKS}; either outcome re-enters the common reconciliation state machine.
+     * Keyed by character name to mirror {@link #_companionMap}.
      */
     private final Map<String, PendingReload> _pendingReloads = new ConcurrentHashMap();
+    /** Two delayed, bounded passes catch exact historical clones whose chunks load after summon. */
+    private final Map<String, PendingIdentityRescan> _pendingIdentityRescans = new ConcurrentHashMap();
+    private final Map<String, PendingManualDismiss> _pendingManualDismissals = new ConcurrentHashMap();
+    private final Set<String> _explicitBarrierRestorePending = ConcurrentHashMap.newKeySet();
     private List<Character> _assignedCharacters = new ArrayList();
     private boolean _needsToSummon = false;
     private static final Map<String, CompanionManager> cache = new HashMap<>();
     /** ~5s at 20 tps — an async chunk+entity load completes well within this; longer means the hint is stale. */
     private static final int MAX_RELOAD_RETRY_TICKS = 100;
+    private static final int IDENTITY_RESCAN_INTERVAL_TICKS = 40;
+    private static final int MAX_IDENTITY_RESCAN_ATTEMPTS = 2;
+    private static final int PASSIVE_MANUAL_DISMISS_POLL_TICKS = 20;
+    private static final String DEATH_TASK_CANCELLED_MODEL_NOTE =
+            "A companion instance died while a task was running. That task was cancelled during"
+                    + " death recovery and did not complete.";
+    private static final String NO_AUTO_DEATH_MODEL_NOTE =
+            "You died while auto-respawn was disabled. You were not respawned until your owner"
+                    + " explicitly summoned you.";
+    private static final String NO_AUTO_DEATH_TASK_MODEL_NOTE =
+            "You died while auto-respawn was disabled. You were not respawned until your owner"
+                    + " explicitly summoned you. Your interrupted task was cancelled and did not complete.";
+    private static final String OPERATOR_DISMISS_MODEL_NOTE =
+            "Your owner dismissed you. You remained despawned until the owner explicitly summoned you again.";
+    private static final String OPERATOR_DISMISS_TASK_MODEL_NOTE =
+            "Your owner dismissed you while a task was running. That task was cancelled and did not complete."
+                    + " You remained despawned until explicitly summoned again.";
+    private static final String SESSION_UNLOAD_MODEL_NOTE =
+            "You were temporarily unloaded while your owner session changed. Your state was preserved"
+                    + " for automatic restoration.";
+    private static final String SESSION_UNLOAD_TASK_MODEL_NOTE =
+            "You were temporarily unloaded while a task was running. That task was cancelled and did not"
+                    + " complete. Your state was preserved for automatic restoration.";
+    private static final String KEY_DEATH_RESTORE = "lifecycle_death_restore";
+    private static final String KEY_DEATH_CAUSE = "lifecycle_death_cause";
+    private static final String KEY_TOMBSTONE_UUID = "lifecycle_tombstone_uuid";
+    private static final String KEY_MANUAL_SUMMON_REQUIRED = "lifecycle_manual_summon_required";
+    private static final String KEY_MANUAL_DISMISS_BARRIERS = "companionManualDismissBarriers";
+    private static final String KEY_BARRIER_OWNER = "ownerUuid";
+    private static final String KEY_BARRIER_CHARACTER_ID = "characterId";
+    private static final String KEY_BARRIER_CHARACTER_NAME = "characterName";
+    private static final String KEY_BARRIER_MAPPED_UUID = "mappedUuid";
 
     /** Mutable per-character retry state for a deferred (awaiting async reload) companion. */
     private static final class PendingReload {
         final Character character;
+        final String deferredLifecycleNote;
         int ticksLeft;
 
         PendingReload(Character character, int ticksLeft) {
+            this(character, ticksLeft, null);
+        }
+
+        PendingReload(Character character, int ticksLeft, String deferredLifecycleNote) {
             this.character = character;
             this.ticksLeft = ticksLeft;
+            this.deferredLifecycleNote = deferredLifecycleNote;
         }
+    }
+
+    private static final class PendingIdentityRescan {
+        final Character character;
+        int ticksLeft;
+        int attemptsLeft;
+
+        PendingIdentityRescan(Character character, int ticksLeft, int attemptsLeft) {
+            this.character = character;
+            this.ticksLeft = ticksLeft;
+            this.attemptsLeft = attemptsLeft;
+        }
+    }
+
+    private static final class PendingManualDismiss {
+        final Character character;
+        final UUID mappedUuid;
+        int ticksLeft;
+        boolean forceLoadPhase = true;
+
+        PendingManualDismiss(Character character, UUID mappedUuid, int ticksLeft) {
+            this.character = character;
+            this.mappedUuid = mappedUuid;
+            this.ticksLeft = ticksLeft;
+        }
+    }
+
+    public record DeathRespawnResult(boolean canonicalReady, boolean spawnedReplacement) {
+    }
+
+    record TerminalDeathResult(boolean mappedCanonical, boolean snapshotReady) {
+    }
+
+    record DeathStateReceipt(
+            UUID dyingUuid,
+            boolean exactIdentity,
+            boolean mappedAuthority,
+            boolean stateReady,
+            CompoundTag inventoryState,
+            boolean persistedSynchronously) {
+        DeathStateReceipt {
+            inventoryState = inventoryState == null ? null : inventoryState.copy();
+        }
+    }
+
+    private record ReconciliationOutcome(AutomatoneEntity canonical, boolean spawnedFresh) {
+    }
+
+    private record SpawnedCompanion(
+            AutomatoneEntity entity,
+            CompanionIdentityReconciliationPolicy.CanonicalReceipt receipt) {
     }
 
     public CompanionManager(ServerPlayer player) {
@@ -96,15 +192,13 @@ public class CompanionManager {
             return SummonIntent.CREATE_NEW;
         }
         String name = character.name();
-        if (this._despawnedCompanionData.containsKey(name)) {
-            return SummonIntent.CREATE_NEW;
-        }
         UUID companionUuid = this._companionMap.get(name);
-        if (companionUuid == null) {
-            return SummonIntent.CREATE_NEW;
-        }
         Located located = this.resolveLoadedCompanion(companionUuid);
-        if (located != null && located.entity().isAlive()) {
+        List<Located> exactMatches = this.resolveLoadedCompanionsByIdentity(character);
+        boolean mappedLoadedExact = located != null
+                && located.entity().isAlive()
+                && exactMatches.stream().anyMatch(match -> match.entity().getUUID().equals(companionUuid));
+        if (mappedLoadedExact || !exactMatches.isEmpty()) {
             return SummonIntent.TELEPORT_ALIVE;
         }
         // Not loaded in any dimension, but a live location hint means the companion is alive-but-unloaded:
@@ -114,8 +208,11 @@ public class CompanionManager {
         // that would let denial()/filterForJoin wrongly count a live reunion against the spawn cap (deny it,
         // or drop it from the join batch). No force-load here — the hint's presence is sufficient and, unlike
         // resolveViaLocationHint's post-load getEntity, it is not subject to the async entity-load race.
-        if (CompanionLocationTracker.get(companionUuid) != null) {
+        if (companionUuid != null && CompanionLocationTracker.get(companionUuid) != null) {
             return SummonIntent.TELEPORT_ALIVE;
+        }
+        if (this.hasExactDespawnedSnapshot(character)) {
+            return SummonIntent.RESTORE_DESPAWNED;
         }
         return SummonIntent.CREATE_NEW;
     }
@@ -144,6 +241,83 @@ public class CompanionManager {
             }
         }
         return null;
+    }
+
+    /**
+     * Loaded-only fallback for a lost/stale canonical UUID. Matching is deliberately strict: both
+     * owner UUID and nonblank Player2 character id must match. Display names are never identity.
+     */
+    private List<Located> resolveLoadedCompanionsByIdentity(Character requestedCharacter) {
+        MinecraftServer server = this._player.getServer();
+        String requestedCharacterId = stableCharacterId(requestedCharacter);
+        if (server == null || requestedCharacterId == null) {
+            return List.of();
+        }
+        Map<UUID, Located> locatedByUuid = new HashMap<>();
+        List<CompanionIdentityReconciliationPolicy.Candidate> candidates = new ArrayList<>();
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity entity : level.getAllEntities()) {
+                if (!(entity instanceof AutomatoneEntity auto)) {
+                    continue;
+                }
+                boolean sameDimension = level == this._player.serverLevel();
+                double distanceSquared = sameDimension
+                        ? auto.distanceToSqr(this._player)
+                        : Double.POSITIVE_INFINITY;
+                locatedByUuid.put(auto.getUUID(), new Located(auto, level));
+                candidates.add(new CompanionIdentityReconciliationPolicy.Candidate(
+                        auto.getUUID(),
+                        OwnerCharacterStoragePaths.ownerUuidOrNull(auto),
+                        stableCharacterId(auto.character),
+                        auto.isAlive(),
+                        auto.isRemoved(),
+                        sameDimension,
+                        distanceSquared));
+            }
+        }
+        List<Located> matches = new ArrayList<>();
+        for (UUID selected : CompanionIdentityReconciliationPolicy.select(
+                this._player.getUUID(), requestedCharacterId, candidates)) {
+            Located candidate = locatedByUuid.get(selected);
+            if (candidate != null) {
+                matches.add(candidate);
+            }
+        }
+        return List.copyOf(matches);
+    }
+
+    private static String stableCharacterId(Character character) {
+        if (character == null || character.id() == null || character.id().isBlank()) {
+            return null;
+        }
+        return character.id();
+    }
+
+    /**
+     * A legacy name-keyed snapshot may only authorize destructive recovery when its embedded stable
+     * identity is exact. Same-name, malformed, or ownerless snapshots remain untouched and inert.
+     */
+    private boolean hasExactDespawnedSnapshot(Character requestedCharacter) {
+        String requestedId = stableCharacterId(requestedCharacter);
+        if (requestedCharacter == null || requestedCharacter.name() == null || requestedId == null) {
+            return false;
+        }
+        CompoundTag snapshot = this._despawnedCompanionData.get(requestedCharacter.name());
+        if (snapshot == null || !snapshot.contains("character", 10) || !snapshot.hasUUID("owner_uuid")) {
+            return false;
+        }
+        try {
+            Character snapshotCharacter = CharacterUtils.readFromNBT(snapshot.getCompound("character"));
+            return CompanionIdentityReconciliationPolicy.snapshotIdentityMatches(
+                    this._player.getUUID(),
+                    requestedId,
+                    snapshot.getUUID("owner_uuid"),
+                    stableCharacterId(snapshotCharacter));
+        } catch (RuntimeException malformed) {
+            LOGGER.warn("Ignoring malformed despawned companion identity snapshot for owner={}",
+                    this._player.getUUID());
+            return false;
+        }
     }
 
     /**
@@ -203,10 +377,10 @@ public class CompanionManager {
                 }
 
             });
-            toDismiss.forEach(this::dismissCompanion);
+            toDismiss.forEach(name -> this.dismissCompanion(name, false, null));
             this._assignedCharacters.stream().filter((character) -> character != null).forEach((character) -> {
                 LOGGER.info("summonCompanions for character={}", character);
-                this.ensureCompanionExists(character);
+                this.ensureCompanionExists(character, true);
             });
             this._assignedCharacters.clear();
             writeToNbt();
@@ -214,61 +388,612 @@ public class CompanionManager {
     }
 
     public void ensureCompanionExists(Character character) {
+        this.ensureCompanionExists(character, false);
+    }
+
+    private void ensureCompanionExists(Character character, boolean automatic) {
         LOGGER.info("ensureCompanionExists for character={}", character);
+        if (character == null) {
+            return;
+        }
         Optional<Component> deny = CompanionSpawnPolicy.denial(this._player, character, this);
         if (deny.isPresent()) {
             this._player.sendSystemMessage(deny.get());
             return;
         }
+        UUID manualDismissBarrier = this.manualDismissBarrier(character);
+        if (automatic && manualDismissBarrier != null) {
+            UUID currentMapped = this._companionMap.get(character.name());
+            this.queuePendingManualDismiss(
+                    character, currentMapped != null ? currentMapped : manualDismissBarrier);
+            LOGGER.info("Automatic companion restore blocked by explicit-dismiss barrier for character={}",
+                    character.name());
+            return;
+        }
+        if (!automatic && manualDismissBarrier != null) {
+            // An explicit summon deliberately supersedes the pending cleanup attempt. The persisted
+            // barrier itself remains until reconciliation has an accepted canonical receipt.
+            this._pendingManualDismissals.remove(character.name());
+        }
+        CompoundTag exactSnapshot = this.exactSnapshotState(character);
+        if (automatic && exactSnapshot != null
+                && exactSnapshot.getBoolean(KEY_MANUAL_SUMMON_REQUIRED)) {
+            LOGGER.info("Automatic companion restore deferred until explicit summon for character={}",
+                    character.name());
+            return;
+        }
         if (this._player.level() != null && this._player.getServer() != null) {
             LOGGER.info("ensureCompanionExists NOTNULL");
-            // Dismiss stores a snapshot in _despawnedCompanionData. The old "restore from NBT" path was
-            // commented out to stop auto-respawns; leaving the key set with an empty branch made re-summon a no-op.
-            // Drop the stale snapshot so we can spawn/teleport like a fresh request.
-            if (this._despawnedCompanionData.containsKey(character.name())) {
-                LOGGER.info("ensureCompanionExists: clearing despawned snapshot (restore disabled) so summon can proceed");
-                this._despawnedCompanionData.remove(character.name());
-                writeToNbt();
-            }
-            UUID companionUuid = (UUID) this._companionMap.get(character.name());
-            // Resolve the mapped companion across ALL dimensions. The old code used
-            // this._player.serverLevel().getEntity(uuid) — a single-dimension check that returned null
-            // whenever the companion sat in another dimension, so ensureCompanionExists then SPAWNED a
-            // CLONE and overwrote the map, orphaning the still-alive original (one clone per dimension
-            // change). classifySummon already searched all levels; this makes the two symmetric.
+            UUID companionUuid = this._companionMap.get(character.name());
             Located located = this.resolveLoadedCompanion(companionUuid);
-            // "Not loaded in any level" can also mean "merely unloaded", not "gone". Before spawning
-            // (which would clone next to a healthy, sleeping companion) consult the location hint and
-            // force-load that one chunk. That entity load is ASYNC (see resolveViaLocationHint), so a
-            // hinted-but-not-yet-surfaced companion cannot be confirmed this tick.
             if (located == null && companionUuid != null) {
                 located = this.resolveViaLocationHint(companionUuid);
                 if (located == null && CompanionLocationTracker.get(companionUuid) != null) {
-                    // A hint exists but the entity is not in the live lookup yet (async chunk+entity load in
-                    // flight). DEFER rather than clone: serverTick retries until it loads (then relocate/TP)
-                    // or the hint proves stale after MAX_RELOAD_RETRY_TICKS (then spawn). resolveViaLocationHint
-                    // above already kicked off the load.
-                    this._pendingReloads.put(character.name(), new PendingReload(character, MAX_RELOAD_RETRY_TICKS));
+                    // Retain every receipt, including any exact despawn snapshot, while the mapped
+                    // entity's async chunk load is pending. Success and timeout both re-enter the same
+                    // reconciliation state machine below; neither may direct-spawn around it.
+                    if (!automatic && manualDismissBarrier != null) {
+                        this._explicitBarrierRestorePending.add(character.name());
+                    }
+                    this.queuePendingReload(character, null);
                     LOGGER.info("ensureCompanionExists DEFER (awaiting async reload) for {}", character.name());
                     return;
                 }
             }
-            // Reached a decision (found, or genuinely absent with no hint): cancel any stale deferral.
             this._pendingReloads.remove(character.name());
-            if (located != null && located.entity().isAlive()) {
-                this.teleportOrRelocate(character, located);
-            } else {
-                LOGGER.info("ensureCompanionExists SPAWN");
-                try {
-                    spawnCompanion(character);
-                    System.out.println("Summoned new companion: " + character.name() + " for player " + this._player.getName().getString());
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                writeToNbt();
+            ReconciliationOutcome outcome = this.reconcileCompanion(character, companionUuid, located);
+            if (!automatic && manualDismissBarrier != null && outcome.canonical() != null) {
+                this.clearManualDismissBarrier(character, manualDismissBarrier);
             }
-
         }
+    }
+
+    /** Reconciles map, exact stable identity, snapshot and world/state receipts as one commit. */
+    private ReconciliationOutcome reconcileCompanion(Character character, UUID mappedUuid, Located mappedLocated) {
+        List<Located> identityMatches = this.resolveLoadedCompanionsByIdentity(character);
+        List<UUID> exactUuids = identityMatches.stream().map(match -> match.entity().getUUID()).toList();
+        boolean mappedLoadedExact = mappedLocated != null
+                && mappedLocated.entity().isAlive()
+                && !mappedLocated.entity().isRemoved()
+                && exactUuids.contains(mappedUuid);
+        boolean exactSnapshot = this.hasExactDespawnedSnapshot(character);
+        CompanionIdentityReconciliationPolicy.Decision decision =
+                CompanionIdentityReconciliationPolicy.decide(
+                        mappedUuid, mappedLoadedExact, exactSnapshot, exactUuids);
+        // Keep the exact receipt available even on KEEP_MAPPED so a lifecycle note whose first
+        // delivery failed is retried before that snapshot/tombstone is consumed.
+        CompoundTag authoritativeState = exactSnapshot
+                ? this.exactSnapshotState(character) : null;
+        SpawnReason restoreReason = authoritativeState != null
+                        && authoritativeState.getBoolean(KEY_DEATH_RESTORE)
+                ? SpawnReason.DEATH_RESPAWN : SpawnReason.RETURNING;
+        String restoreDeathCause = restoreReason == SpawnReason.DEATH_RESPAWN
+                ? boundedSingleLine(authoritativeState.getString(KEY_DEATH_CAUSE), 256) : null;
+        return this.executeReconciliation(
+                character,
+                mappedLocated,
+                identityMatches,
+                decision,
+                restoreReason,
+                restoreDeathCause,
+                authoritativeState,
+                true);
+    }
+
+    private void queuePendingReload(Character character, String deferredLifecycleNote) {
+        if (character == null || character.name() == null) {
+            return;
+        }
+        this._pendingReloads.compute(character.name(), (name, existing) -> {
+            String note = deferredLifecycleNote != null
+                    ? deferredLifecycleNote
+                    : existing == null ? null : existing.deferredLifecycleNote;
+            return new PendingReload(character, MAX_RELOAD_RETRY_TICKS, note);
+        });
+    }
+
+    private void queuePendingManualDismiss(Character character, UUID mappedUuid) {
+        if (character == null || character.name() == null || mappedUuid == null) {
+            return;
+        }
+        this._pendingManualDismissals.compute(character.name(), (name, existing) ->
+                existing != null && mappedUuid.equals(existing.mappedUuid)
+                        ? existing
+                        : new PendingManualDismiss(character, mappedUuid, MAX_RELOAD_RETRY_TICKS));
+        this.resolveViaLocationHint(mappedUuid);
+    }
+
+    private UUID manualDismissBarrier(Character character) {
+        if (character == null || character.name() == null || stableCharacterId(character) == null) {
+            return null;
+        }
+        CompoundTag playerTag = ((IEntityPersistentData) this._player).getPersistentData();
+        CompoundTag barriers = playerTag.getCompound(KEY_MANUAL_DISMISS_BARRIERS);
+        if (!barriers.contains(character.name(), 10)) {
+            return null;
+        }
+        CompoundTag barrier = barriers.getCompound(character.name());
+        if (!barrier.hasUUID(KEY_BARRIER_OWNER)
+                || !this._player.getUUID().equals(barrier.getUUID(KEY_BARRIER_OWNER))
+                || !barrier.hasUUID(KEY_BARRIER_MAPPED_UUID)
+                || !barrier.contains(KEY_BARRIER_CHARACTER_ID, 8)
+                || !stableCharacterId(character).equals(barrier.getString(KEY_BARRIER_CHARACTER_ID))
+                || !barrier.contains(KEY_BARRIER_CHARACTER_NAME, 8)
+                || !character.name().equals(barrier.getString(KEY_BARRIER_CHARACTER_NAME))) {
+            return null;
+        }
+        return barrier.getUUID(KEY_BARRIER_MAPPED_UUID);
+    }
+
+    private void storeManualDismissBarrier(Character character, UUID mappedUuid) {
+        CompoundTag playerTag = ((IEntityPersistentData) this._player).getPersistentData();
+        CompoundTag barriers = playerTag.getCompound(KEY_MANUAL_DISMISS_BARRIERS);
+        CompoundTag barrier = new CompoundTag();
+        barrier.putUUID(KEY_BARRIER_OWNER, this._player.getUUID());
+        barrier.putString(KEY_BARRIER_CHARACTER_ID, stableCharacterId(character));
+        barrier.putString(KEY_BARRIER_CHARACTER_NAME, character.name());
+        barrier.putUUID(KEY_BARRIER_MAPPED_UUID, mappedUuid);
+        barriers.put(character.name(), barrier);
+        playerTag.put(KEY_MANUAL_DISMISS_BARRIERS, barriers);
+    }
+
+    private void clearManualDismissBarrier(Character character, UUID mappedUuid) {
+        if (character == null || character.name() == null || mappedUuid == null) {
+            return;
+        }
+        CompoundTag playerTag = ((IEntityPersistentData) this._player).getPersistentData();
+        CompoundTag barriers = playerTag.getCompound(KEY_MANUAL_DISMISS_BARRIERS);
+        CompoundTag barrier = barriers.getCompound(character.name());
+        if (barrier.hasUUID(KEY_BARRIER_OWNER)
+                && this._player.getUUID().equals(barrier.getUUID(KEY_BARRIER_OWNER))
+                && barrier.contains(KEY_BARRIER_CHARACTER_ID, 8)
+                && stableCharacterId(character) != null
+                && stableCharacterId(character).equals(barrier.getString(KEY_BARRIER_CHARACTER_ID))
+                && barrier.contains(KEY_BARRIER_CHARACTER_NAME, 8)
+                && character.name().equals(barrier.getString(KEY_BARRIER_CHARACTER_NAME))) {
+            barriers.remove(character.name());
+            playerTag.put(KEY_MANUAL_DISMISS_BARRIERS, barriers);
+            this._pendingManualDismissals.remove(character.name());
+            this._explicitBarrierRestorePending.remove(character.name());
+        }
+    }
+
+    boolean hasManualDismissIntent(Character character) {
+        return this.manualDismissBarrier(character) != null;
+    }
+
+    private ReconciliationOutcome executeReconciliation(
+            Character character,
+            Located mappedLocated,
+            List<Located> identityMatches,
+            CompanionIdentityReconciliationPolicy.Decision decision,
+            SpawnReason spawnReason,
+            String deathCause,
+            CompoundTag authoritativeState,
+            boolean repositionExisting) {
+        AutomatoneEntity canonical = null;
+        boolean spawnedFresh = false;
+        CompanionIdentityReconciliationPolicy.CanonicalReceipt canonicalReceipt =
+                CompanionIdentityReconciliationPolicy.CanonicalReceipt.missing();
+        switch (decision.action()) {
+            case KEEP_MAPPED -> {
+                Located kept = findLocated(identityMatches, decision.canonicalUuid());
+                if (kept == null) {
+                    kept = mappedLocated;
+                }
+                canonical = repositionExisting
+                        ? this.teleportOrRelocate(character, kept)
+                        : this.retainWithoutMoving(kept);
+                if (canonical != null) {
+                    canonicalReceipt = CompanionIdentityReconciliationPolicy.CanonicalReceipt.existing();
+                }
+            }
+            case ADOPT_LOADED -> {
+                Located adopted = findLocated(identityMatches, decision.canonicalUuid());
+                if (adopted != null) {
+                    // Persist the selected live identity before any later cleanup. A failed
+                    // cross-dimension relocation leaves this still-live entity recoverable.
+                    this._companionMap.put(character.name(), adopted.entity().getUUID());
+                    writeToNbt();
+                    canonical = repositionExisting
+                            ? this.teleportOrRelocate(character, adopted)
+                            : this.retainWithoutMoving(adopted);
+                    if (canonical != null) {
+                        canonicalReceipt = CompanionIdentityReconciliationPolicy.CanonicalReceipt.existing();
+                    }
+                }
+            }
+            case SPAWN_FRESH -> {
+                try {
+                    SpawnedCompanion spawned = this.spawnCompanionVerified(
+                            character, spawnReason, deathCause, authoritativeState);
+                    canonical = spawned.entity();
+                    canonicalReceipt = spawned.receipt();
+                    spawnedFresh = true;
+                } catch (RuntimeException spawnFailure) {
+                    this.reportCompanionSpawnFailure(character, spawnFailure);
+                    if (!decision.discardAfterSuccess().isEmpty()) {
+                        this.deferPreservedRecoveryFailure(identityMatches);
+                    }
+                }
+            }
+        }
+
+        CompanionIdentityReconciliationPolicy.Completion completion =
+                CompanionIdentityReconciliationPolicy.complete(decision, canonicalReceipt);
+        if (!completion.canonicalReady()) {
+            return new ReconciliationOutcome(null, false);
+        }
+        boolean lifecycleNoteDelivered = this.deliverSnapshotLifecycleNote(
+                canonical, authoritativeState);
+        if (completion.consumeExactSnapshot() && lifecycleNoteDelivered) {
+            // exactSnapshot was validated by owner UUID + stable character id above. A malformed or
+            // same-name/different-id snapshot is never removed by this recovery path.
+            this._despawnedCompanionData.remove(character.name());
+            this.deleteConsumedTombstone(character, authoritativeState);
+        }
+        boolean cancelledDuplicateTask = false;
+        for (UUID discardUuid : completion.discardNow()) {
+            Located orphan = findLocated(identityMatches, discardUuid);
+            if (orphan != null && orphan.entity() != canonical && orphan.entity().isAlive()
+                    && !orphan.entity().isRemoved()) {
+                cancelledDuplicateTask |= this.discardLoadedIdentityOrphan(orphan.entity());
+            }
+        }
+        writeToNbt();
+        this.scheduleIdentityRescan(character);
+        if (cancelledDuplicateTask) {
+            this.reportDuplicateTaskCancellation(
+                    character,
+                    canonical.controller,
+                    "A duplicate companion instance was removed during identity recovery. Any task running"
+                            + " on that duplicate was cancelled and did not complete.");
+        }
+        return new ReconciliationOutcome(canonical, spawnedFresh);
+    }
+
+    private boolean deliverSnapshotLifecycleNote(
+            AutomatoneEntity canonical, CompoundTag authoritativeState) {
+        String note = PersistentDataManager.lifecycleNote(authoritativeState);
+        if (note.isEmpty()) {
+            return true;
+        }
+        if (canonical == null || canonical.controller == null) {
+            return false;
+        }
+        try {
+            AiConversationFeedback.deferInfo(canonical.controller, note);
+            return true;
+        } catch (RuntimeException deliveryFailure) {
+            LOGGER.warn("Failed to transfer lifecycle note to canonical companion owner={} uuid={}",
+                    this._player.getUUID(), canonical.getUUID(), deliveryFailure);
+            return false;
+        }
+    }
+
+    private void deleteConsumedTombstone(
+            Character character, CompoundTag authoritativeState) {
+        if (authoritativeState == null || !authoritativeState.hasUUID(KEY_TOMBSTONE_UUID)
+                || this._player.getServer() == null || stableCharacterId(character) == null) {
+            return;
+        }
+        OfflineDeathTombstoneStorage.deleteExact(
+                this._player.getServer(),
+                this._player.getUUID(),
+                stableCharacterId(character),
+                authoritativeState.getUUID(KEY_TOMBSTONE_UUID));
+    }
+
+    private CompoundTag exactSnapshotState(Character character) {
+        if (character == null || character.name() == null) {
+            return null;
+        }
+        CompoundTag snapshot = this._despawnedCompanionData.get(character.name());
+        return snapshot == null ? null : snapshot.copy();
+    }
+
+    private AutomatoneEntity retainWithoutMoving(Located located) {
+        if (located == null || !located.entity().isAlive() || located.entity().isRemoved()) {
+            return null;
+        }
+        located.entity().reattachOwner(this._player);
+        return located.entity();
+    }
+
+    private void deferPreservedRecoveryFailure(List<Located> identityMatches) {
+        if (identityMatches == null) {
+            return;
+        }
+        for (Located preserved : identityMatches) {
+            if (preserved != null && preserved.entity().isAlive() && !preserved.entity().isRemoved()
+                    && preserved.entity().controller != null) {
+                AiConversationFeedback.deferInfo(preserved.entity().controller,
+                        "Companion identity recovery could not establish the replacement, so this loaded"
+                                + " instance was preserved. The recovery did not complete.");
+                return;
+            }
+        }
+    }
+
+    private static Located findLocated(List<Located> matches, UUID uuid) {
+        if (uuid == null || matches == null) {
+            return null;
+        }
+        for (Located match : matches) {
+            if (match != null && uuid.equals(match.entity().getUUID())) {
+                return match;
+            }
+        }
+        return null;
+    }
+
+    private static String boundedSingleLine(String value, int maximumLength) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String singleLine = value.replace('\r', ' ').replace('\n', ' ').trim();
+        return singleLine.length() <= maximumLength
+                ? singleLine : singleLine.substring(0, maximumLength);
+    }
+
+    private void reportDuplicateTaskCancellation(
+            Character character,
+            com.player2.playerengine.PlayerEngineController canonicalController,
+            String modelMessage) {
+        try {
+            this._player.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.duplicate_task_cancelled",
+                    character.shortName()));
+        } catch (RuntimeException playerFeedbackFailure) {
+            LOGGER.warn("Could not report duplicate-task cancellation to owner={} characterId={}",
+                    this._player.getUUID(), stableCharacterId(character), playerFeedbackFailure);
+        }
+        if (canonicalController != null) {
+            try {
+                AiConversationFeedback.deferInfo(
+                        canonicalController, boundedSingleLine(modelMessage, 240));
+            } catch (RuntimeException modelFeedbackFailure) {
+                LOGGER.warn("Could not defer duplicate-task cancellation owner={} characterId={}",
+                        this._player.getUUID(), stableCharacterId(character), modelFeedbackFailure);
+            }
+        }
+    }
+
+    private boolean hasActiveWork(AutomatoneEntity entity) {
+        return entity != null
+                && entity.controller != null
+                && (entity.controller.hasActiveNonIdleUserTask()
+                        || AgenticRunRegistry.get(entity.getUUID()).isPresent());
+    }
+
+    boolean hasActiveWorkForLifecycle(AutomatoneEntity entity) {
+        return this.hasActiveWork(entity);
+    }
+
+    /** Pre-vanilla-death authority gate used to prevent duplicate inventory/loot drops. */
+    boolean isMappedDeathAuthority(AutomatoneEntity dying) {
+        return dying != null && dying.character != null && dying.character.name() != null
+                && dying.getUUID().equals(this._companionMap.get(dying.character.name()))
+                && this.isExactStableIdentity(dying, dying.character);
+    }
+
+    /**
+     * Captures post-vanilla-death inventory only when the dying entity is the mapped exact canonical.
+     * Calling this after {@code super.die} preserves keepInventory semantics: kept items remain in the
+     * snapshot, while dropped items have already been removed and therefore cannot be duplicated.
+     */
+    DeathStateReceipt capturePostDeathState(AutomatoneEntity dying) {
+        if (dying == null || dying.character == null || dying.character.name() == null) {
+            return new DeathStateReceipt(null, false, false, false, null, false);
+        }
+        UUID mappedUuid = this._companionMap.get(dying.character.name());
+        boolean exactIdentity = this.isExactStableIdentity(dying, dying.character);
+        boolean mappedAuthority = exactIdentity
+                && mappedUuid != null
+                && mappedUuid.equals(dying.getUUID());
+        if (!mappedAuthority) {
+            return new DeathStateReceipt(
+                    dying.getUUID(), exactIdentity, false, false, null, false);
+        }
+        PersistentDataManager.InventoryStateReceipt state =
+                PersistentDataManager.captureInventoryStateNow(dying);
+        boolean persisted = state.ready()
+                && PersistentDataManager.saveInventoryNowWithReceipt(dying);
+        if (state.ready() && !persisted) {
+            LOGGER.warn("Canonical post-death inventory could not be persisted synchronously for owner={}"
+                            + " characterId={}; direct state transfer remains available",
+                    this._player.getUUID(), stableCharacterId(dying.character));
+        }
+        return new DeathStateReceipt(
+                dying.getUUID(),
+                exactIdentity,
+                true,
+                state.ready(),
+                state.state(),
+                persisted);
+    }
+
+    /**
+     * Commits a canonical death that must not auto-spawn. The mapped UUID is the authority gate:
+     * a historical duplicate can be cleaned up, but can never clear/overwrite the canonical map or
+     * store owner+character state.
+     */
+    TerminalDeathResult reconcileTerminalDeath(
+            AutomatoneEntity dying,
+            Character character,
+            DeathStateReceipt deathState,
+            boolean preserveForManualSummon,
+            String lifecycleNote,
+            String deathCause) {
+        if (dying == null || character == null || character.name() == null
+                || deathState == null || !deathState.mappedAuthority()
+                || !dying.getUUID().equals(this._companionMap.get(character.name()))) {
+            // A noncanonical death may expose other loaded duplicates, but it never changes the map.
+            this.cleanupDelayedIdentityExtras(character);
+            return new TerminalDeathResult(false, false);
+        }
+
+        boolean snapshotReady = !preserveForManualSummon;
+        if (preserveForManualSummon) {
+            if (!deathState.stateReady() || deathState.inventoryState() == null) {
+                this.reportCompanionSpawnFailure(
+                        character,
+                        new IllegalStateException("Canonical terminal death state was unavailable"));
+            } else {
+                CompoundTag snapshot = PersistentDataManager.withLifecycleNote(
+                        deathState.inventoryState(), lifecycleNote);
+                snapshot.putBoolean(KEY_DEATH_RESTORE, true);
+                snapshot.putBoolean(KEY_MANUAL_SUMMON_REQUIRED, true);
+                if (deathCause != null && !deathCause.isBlank()) {
+                    snapshot.putString(KEY_DEATH_CAUSE, deathCause);
+                }
+                this._despawnedCompanionData.put(character.name(), snapshot);
+                snapshotReady = true;
+            }
+        } else {
+            this._despawnedCompanionData.remove(character.name());
+        }
+
+        this._companionMap.remove(character.name(), dying.getUUID());
+        this._pendingReloads.remove(character.name());
+        String stableId = stableCharacterId(character);
+        if (stableId != null) {
+            this._pendingIdentityRescans.remove(stableId);
+        }
+        for (Located exact : this.resolveLoadedCompanionsByIdentity(character)) {
+            AutomatoneEntity duplicate = exact.entity();
+            if (!dying.getUUID().equals(duplicate.getUUID())
+                    && duplicate.isAlive() && !duplicate.isRemoved()) {
+                this.discardLoadedIdentityOrphan(duplicate);
+            }
+        }
+        writeToNbt();
+        if (!preserveForManualSummon && this.hasManualDismissIntent(character)) {
+            this.clearManualDismissBarrier(character, dying.getUUID());
+        }
+        return new TerminalDeathResult(true, snapshotReady);
+    }
+
+    DeathRespawnResult reconcileAfterDeath(
+            AutomatoneEntity dying,
+            Character character,
+            String deathCause,
+            DeathStateReceipt deathState,
+            boolean interruptedTask) {
+        if (dying == null || character == null || character.name() == null) {
+            return new DeathRespawnResult(false, false);
+        }
+        UUID mappedUuid = this._companionMap.get(character.name());
+        Located mappedLocated = this.resolveLoadedCompanion(mappedUuid);
+        if (mappedLocated == null && mappedUuid != null && !mappedUuid.equals(dying.getUUID())) {
+            mappedLocated = this.resolveViaLocationHint(mappedUuid);
+            if (mappedLocated == null && CompanionLocationTracker.get(mappedUuid) != null) {
+                this.queuePendingReload(
+                        character,
+                        interruptedTask ? DEATH_TASK_CANCELLED_MODEL_NOTE : null);
+                return new DeathRespawnResult(false, false);
+            }
+        }
+        List<Located> identityMatches = this.resolveLoadedCompanionsByIdentity(character);
+        List<UUID> exactUuids = identityMatches.stream().map(match -> match.entity().getUUID()).toList();
+        boolean mappedLoadedExact = mappedLocated != null
+                && mappedLocated.entity().isAlive()
+                && !mappedLocated.entity().isRemoved()
+                && exactUuids.contains(mappedUuid);
+        boolean exactSnapshot = this.hasExactDespawnedSnapshot(character);
+        boolean dyingIdentityExact = deathState != null && deathState.exactIdentity();
+        CompanionIdentityReconciliationPolicy.Decision decision =
+                CompanionIdentityReconciliationPolicy.decideAfterDeath(
+                        mappedUuid,
+                        dying.getUUID(),
+                        dyingIdentityExact,
+                        mappedLoadedExact,
+                        exactSnapshot,
+                        exactUuids);
+
+        CompoundTag authoritativeState = null;
+        if (CompanionIdentityReconciliationPolicy.mayUseDyingState(
+                mappedUuid, dying.getUUID(), dyingIdentityExact, decision)) {
+            if (deathState == null || !deathState.mappedAuthority()
+                    || !deathState.stateReady() || deathState.inventoryState() == null) {
+                RuntimeException missingState =
+                        new IllegalStateException("Canonical post-death inventory state was unavailable");
+                this.reportCompanionSpawnFailure(character, missingState);
+                this.deferPreservedRecoveryFailure(identityMatches);
+                return new DeathRespawnResult(false, false);
+            }
+            CompoundTag deathCheckpoint = PersistentDataManager.withLifecycleNote(
+                    deathState.inventoryState(),
+                    interruptedTask ? DEATH_TASK_CANCELLED_MODEL_NOTE : "");
+            deathCheckpoint.putBoolean(KEY_DEATH_RESTORE, true);
+            String boundedDeathCause = boundedSingleLine(deathCause, 256);
+            if (!boundedDeathCause.isEmpty()) {
+                deathCheckpoint.putString(KEY_DEATH_CAUSE, boundedDeathCause);
+            }
+            this._despawnedCompanionData.put(character.name(), deathCheckpoint);
+            writeToNbt();
+            authoritativeState = deathCheckpoint;
+            // The newly durable exact checkpoint is now part of this transaction and is consumed
+            // only after executeReconciliation receives state+world+note acknowledgement.
+            decision = new CompanionIdentityReconciliationPolicy.Decision(
+                    decision.action(),
+                    decision.canonicalUuid(),
+                    decision.discardAfterSuccess(),
+                    true);
+        } else if (decision.action() == CompanionIdentityReconciliationPolicy.Action.SPAWN_FRESH
+                && exactSnapshot) {
+            authoritativeState = this.exactSnapshotState(character);
+        }
+        if (!CompanionIdentityReconciliationPolicy.deathSpawnAuthorized(
+                decision, authoritativeState != null)) {
+            RuntimeException missingAuthority =
+                    new IllegalStateException("Death recovery had no authoritative inventory state");
+            this.reportCompanionSpawnFailure(character, missingAuthority);
+            return new DeathRespawnResult(false, false);
+        }
+
+        ReconciliationOutcome outcome = this.executeReconciliation(
+                character,
+                mappedLocated,
+                identityMatches,
+                decision,
+                SpawnReason.DEATH_RESPAWN,
+                deathCause,
+                authoritativeState,
+                false);
+        return new DeathRespawnResult(outcome.canonical() != null, outcome.spawnedFresh());
+    }
+
+    private boolean isExactStableIdentity(AutomatoneEntity entity, Character requestedCharacter) {
+        String requestedId = stableCharacterId(requestedCharacter);
+        return entity != null
+                && this._player.getUUID().equals(OwnerCharacterStoragePaths.ownerUuidOrNull(entity))
+                && requestedId != null
+                && requestedId.equals(stableCharacterId(entity.character));
+    }
+
+    /** @return whether an active orphan task was cancelled and must be reflected to the canonical model. */
+    private boolean discardLoadedIdentityOrphan(AutomatoneEntity orphan) {
+        boolean active = this.hasActiveWork(orphan);
+        if (orphan.controller != null) {
+            // The duplicate's queue is deleted below; report any cancellation to the retained
+            // canonical model instead of enqueueing information onto a doomed queue.
+            orphan.controller.stop();
+            orphan.controller.unregisterFromGlobalRegistry();
+        }
+        ConversationManager.despwnCompanion(orphan.getUUID());
+        CompanionLocationTracker.clear(orphan.getUUID());
+        orphan.discard();
+        return active;
+    }
+
+    private void reportCompanionSpawnFailure(Character character, RuntimeException failure) {
+        if (character != null) {
+            this._player.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.relocate_failed", character.shortName()));
+        }
+        LOGGER.warn("Failed to establish canonical companion for owner={} characterId={}",
+                this._player.getUUID(), stableCharacterId(character), failure);
     }
 
     /**
@@ -277,7 +1002,10 @@ public class CompanionManager {
      * {@link #ensureCompanionExists} path and the deferred {@link #processReloadRetries} path so both treat
      * a reunion identically (and neither ever clones a still-alive companion).
      */
-    private void teleportOrRelocate(Character character, Located located) {
+    private AutomatoneEntity teleportOrRelocate(Character character, Located located) {
+        if (located == null || !located.entity().isAlive() || located.entity().isRemoved()) {
+            return null;
+        }
         AutomatoneEntity automatone = located.entity();
         if (located.level() == this._player.serverLevel()) {
             LOGGER.info("ensureCompanionExists TP");
@@ -289,117 +1017,315 @@ public class CompanionManager {
             BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
             automatone.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F);
             System.out.println("Teleported existing companion: " + character.name() + " for player " + this._player.getName().getString());
+            return automatone;
         } else {
             LOGGER.info("ensureCompanionExists RELOCATE");
             // Different dimension: MC moveTo cannot cross levels. Reuse the proven dismiss+respawn
             // path (the exact mechanism run on every relog) to bring the companion to the player's
-            // current dimension, preserving inventory via the per-owner inventory file. The
+            // current dimension, preserving inventory through an acknowledged in-memory transfer. The
             // companion UUID changes — already normal on relog.
-            this.relocateAcrossDimension(character, automatone);
+            return this.relocateAcrossDimension(character, automatone);
         }
     }
 
     /**
      * Bring a still-alive companion currently loaded in a DIFFERENT dimension to the owner's current
      * dimension. MC {@code moveTo} cannot move an entity between levels, so we reuse the proven
-     * dismiss+respawn mechanism (identical to what a relog already does): persist the inventory to the
-     * per-owner file, run the truthfulness/cleanup hooks, discard the old entity, then respawn a fresh
-     * one in the owner's current level whose {@code init()} reloads the just-saved inventory. Runs on
-     * the server thread synchronously (like {@link #dismissCompanion}), so the save completes before the
-     * old entity is discarded and the new one constructed.
+     * dismiss+respawn mechanism, but transactionally: capture authoritative inventory state, construct,
+     * synchronously apply it, and verify the replacement in the owner's current level before cleanup.
+     * A rejected replacement therefore leaves the original canonical alive and recoverable.
      */
-    private void relocateAcrossDimension(Character character, AutomatoneEntity oldCompanion) {
-        // Persist inventory + history BEFORE discard so the respawn reloads it (keyed by owner+characterId).
-        PersistentDataManager.saveInventoryNow(oldCompanion);
+    private AutomatoneEntity relocateAcrossDimension(Character character, AutomatoneEntity oldCompanion) {
+        // Reattach first so both persistence and the replacement use the same owner+character path even
+        // when this entity was loaded while its owner was offline.
+        oldCompanion.reattachOwner(this._player);
+        PersistentDataManager.InventoryStateReceipt inventoryState =
+                PersistentDataManager.captureInventoryStateNow(oldCompanion);
+        boolean interruptedTask = this.hasActiveWork(oldCompanion);
+        if (!inventoryState.ready() || inventoryState.state() == null) {
+            RuntimeException missingState =
+                    new IllegalStateException("Canonical relocation inventory state was unavailable");
+            this.reportCompanionSpawnFailure(character, missingState);
+            if (oldCompanion.controller != null) {
+                AiConversationFeedback.deferInfo(oldCompanion.controller,
+                        "You could not relocate because your inventory state could not be transferred."
+                                + " You remained in your original dimension.");
+            }
+            return null;
+        }
+        if (!PersistentDataManager.saveInventoryNowWithReceipt(oldCompanion)) {
+            LOGGER.warn("Relocation inventory could not be persisted synchronously for owner={} characterId={};"
+                            + " using acknowledged in-memory transfer",
+                    this._player.getUUID(), stableCharacterId(character));
+        }
+        AutomatoneEntity replacement;
+        try {
+            replacement = this.spawnCompanionVerified(
+                    character,
+                    SpawnReason.DIMENSION_RELOCATE,
+                    null,
+                    inventoryState.state()).entity();
+        } catch (RuntimeException spawnFailure) {
+            this.reportCompanionSpawnFailure(character, spawnFailure);
+            if (oldCompanion.controller != null) {
+                AiConversationFeedback.deferInfo(oldCompanion.controller,
+                        "You could not relocate to your owner, so you remained in your original dimension."
+                                + " The owner can try summoning you again.");
+            }
+            return null;
+        }
         if (oldCompanion.controller != null) {
-            // Truthfulness hook: only notifies player+model when a task/agentic run was actually active
-            // (internal check); an idle relocate stays silent. Matches DESIGN.md §3.
             oldCompanion.controller.stopWithRespawnNotification(this._player);
             oldCompanion.controller.unregisterFromGlobalRegistry();
         }
         ConversationManager.despwnCompanion(oldCompanion.getUUID());
         CompanionLocationTracker.clear(oldCompanion.getUUID());
         oldCompanion.discard();
-        // Respawn in the owner's CURRENT dimension; DIMENSION_RELOCATE = silent (no greeting/return spam).
-        // The old entity is ALREADY discarded, so a spawn failure would otherwise leave the character with
-        // NO companion and propagate out of the tick/packet handler. Log and let the next summon self-heal:
-        // the stale UUID + hint were cleared above, so classifySummon then reads CREATE_NEW cleanly.
-        try {
-            spawnCompanion(character, SpawnReason.DIMENSION_RELOCATE, null);
-        } catch (Exception e) {
-            // The old entity is ALREADY discarded above, so a respawn failure here means the companion has
-            // silently VANISHED. Make the failure VISIBLE to the owner (DESIGN.md §3 "visible degradation,
-            // never silent") instead of only printing a trace: a short keyed chat line telling them to
-            // summon again. There is no model surface to reach — the entity failed to spawn, so there is no
-            // bot to speak; the player-visible line + a console warn is the required outcome. The throwable
-            // stays on the console only (never routed into a prompt — data-egress rule).
-            if (character != null) {
-                this._player.sendSystemMessage(Component.translatable(
-                        "message.player2npc.companion.relocate_failed", character.shortName()));
-            }
-            LOGGER.warn("Failed to respawn relocated companion {} for {}",
-                    character != null ? character.name() : "?", this._player.getName().getString(), e);
+        if (interruptedTask && replacement.controller != null) {
+            AiConversationFeedback.deferInfo(replacement.controller,
+                    "You were relocated across dimensions while a task was running. That task was cancelled"
+                            + " and did not complete.");
         }
         writeToNbt();
         System.out.println("Relocated companion across dimension: " + character.name() + " for player " + this._player.getName().getString());
+        return replacement;
     }
 
     public void spawnCompanion(Character character){
-        spawnCompanion(character, SpawnReason.RETURNING, null);
+        spawnCompanionVerified(character, SpawnReason.RETURNING, null, null);
     }
 
     public void spawnCompanion(Character character, SpawnReason reason, String deathCause){
+        spawnCompanionVerified(character, reason, deathCause, null);
+    }
+
+    private SpawnedCompanion spawnCompanionVerified(
+            Character character,
+            SpawnReason reason,
+            String deathCause,
+            CompoundTag authoritativeState){
         BlockPos spawnPos = this._player.blockPosition().offset(this._player.getRandom().nextInt(3) - 1, 1, this._player.getRandom().nextInt(3) - 1);
-        AutomatoneEntity newCompanion = new AutomatoneEntity(this._player.level(), character, this._player, reason, deathCause);
+        AutomatoneEntity newCompanion = new AutomatoneEntity(
+                this._player.level(),
+                character,
+                this._player,
+                reason,
+                deathCause,
+                true);
+        PersistentDataManager.InventoryStateReceipt stateReceipt = authoritativeState != null
+                ? new PersistentDataManager.InventoryStateReceipt(true, authoritativeState)
+                : PersistentDataManager.loadInventoryStateNow(newCompanion);
+        boolean stateReady = stateReceipt.ready() && stateReceipt.state() != null
+                && PersistentDataManager.applyInventoryStateNow(
+                        newCompanion, stateReceipt.state());
+        if (!stateReady) {
+            this.teardownRejectedSpawn(newCompanion);
+            throw new IllegalStateException(
+                    "Persisted companion state was unavailable or rejected");
+        }
         newCompanion.moveTo((double) spawnPos.getX() + (double) 0.5F, (double) spawnPos.getY(), (double) spawnPos.getZ() + (double) 0.5F, this._player.getYRot(), 0.0F);
-        this._player.level().addFreshEntity(newCompanion);
+        boolean added;
+        try {
+            added = this._player.level().addFreshEntity(newCompanion);
+        } catch (RuntimeException addFailure) {
+            this.teardownRejectedSpawn(newCompanion);
+            throw addFailure;
+        }
+        if (!added) {
+            this.teardownRejectedSpawn(newCompanion);
+            throw new IllegalStateException("Server rejected companion entity spawn");
+        }
         this._companionMap.put(character.name(), newCompanion.getUUID());
+        try {
+            newCompanion.finishManagedSpawnInitialization(reason, deathCause, this._player);
+        } catch (RuntimeException lifecycleMessageFailure) {
+            // World + full-state receipts are already committed. A greeting failure is a bounded
+            // communication degradation, not permission to tear down or duplicate the canonical.
+            LOGGER.warn("Canonical companion lifecycle message failed owner={} characterId={}",
+                    this._player.getUUID(), stableCharacterId(character), lifecycleMessageFailure);
+            this.reportPostCommitLifecycleDegradation(newCompanion, character);
+        }
+        CompanionIdentityReconciliationPolicy.CanonicalReceipt receipt =
+                CompanionIdentityReconciliationPolicy.CanonicalReceipt.spawned(
+                        true, true, stateReady);
+        return new SpawnedCompanion(newCompanion, receipt);
+    }
+
+    /** Post-commit feedback is best-effort and must never invalidate an accepted canonical entity. */
+    private void reportPostCommitLifecycleDegradation(
+            AutomatoneEntity companion, Character character) {
+        try {
+            this._player.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.lifecycle_message_degraded",
+                    character.shortName()));
+        } catch (RuntimeException playerFeedbackFailure) {
+            LOGGER.warn("Could not report lifecycle-message degradation to player owner={} characterId={}",
+                    this._player.getUUID(), stableCharacterId(character), playerFeedbackFailure);
+        }
+        if (companion.controller != null) {
+            try {
+                AiConversationFeedback.deferInfo(companion.controller,
+                        "Your persisted state was restored and you are active, but the initial lifecycle"
+                                + " message could not be delivered.");
+            } catch (RuntimeException modelFeedbackFailure) {
+                LOGGER.warn("Could not defer lifecycle-message degradation owner={} characterId={}",
+                        this._player.getUUID(), stableCharacterId(character), modelFeedbackFailure);
+            }
+        }
+    }
+
+    private void teardownRejectedSpawn(AutomatoneEntity rejected) {
+        if (rejected.controller != null) {
+            rejected.controller.stop();
+            rejected.controller.unregisterFromGlobalRegistry();
+        }
+        ConversationManager.despwnCompanion(rejected.getUUID());
+        CompanionLocationTracker.clear(rejected.getUUID());
+        rejected.discard();
     }
 
     public void dismissCompanion(String characterName) {
-        // Cancel any in-flight deferred reload for this character before touching its mapping.
+        this.dismissCompanion(characterName, true, null);
+    }
+
+    public void dismissCompanion(Character character) {
+        if (character != null) {
+            this.dismissCompanion(character.name(), true, character, true);
+        }
+    }
+
+    private boolean dismissCompanion(
+            String characterName,
+            boolean manualSummonRequired,
+            Character requestedCharacter) {
+        return this.dismissCompanion(
+                characterName, manualSummonRequired, requestedCharacter, false);
+    }
+
+    private boolean dismissCompanion(
+            String characterName,
+            boolean manualSummonRequired,
+            Character requestedCharacter,
+            boolean explicitRequest) {
         this._pendingReloads.remove(characterName);
-        UUID companionUuid = (UUID) this._companionMap.get(characterName);
-        if (companionUuid == null || this._player.getServer() == null) {
-            // Nothing mapped (or no server to resolve against): drop any stale key and return.
-            this._companionMap.remove(characterName);
-            return;
+        UUID companionUuid = this._companionMap.get(characterName);
+        if (this._player.getServer() == null) {
+            return false;
         }
-        // Resolve across ALL dimensions BEFORE mutating the canonical mapping (cross-dimension companions
-        // are found here — the same all-levels search classifySummon uses). We deliberately do NOT force-load
-        // a merely-unloaded companion's chunk here: that entity load is async (see resolveViaLocationHint) so
-        // it would not surface this tick anyway, and fail-open below is the correct, safe outcome for it.
+        if (companionUuid == null) {
+            String requestedId = stableCharacterId(requestedCharacter);
+            boolean exactRequestedCharacter = requestedCharacter != null
+                    && characterName != null
+                    && characterName.equals(requestedCharacter.name())
+                    && requestedId != null;
+            CompoundTag exactSnapshot = exactRequestedCharacter
+                    ? this.exactSnapshotState(requestedCharacter) : null;
+            boolean exactAuthoritativeSnapshot = exactSnapshot != null
+                    && this.hasExactDespawnedSnapshot(requestedCharacter)
+                    && PersistentDataManager.isFullStateForIdentity(
+                            exactSnapshot, this._player.getUUID(), requestedId);
+            if (!ManualDismissBarrierPolicy.canCommitMaplessDismiss(
+                    explicitRequest, exactRequestedCharacter, exactAuthoritativeSnapshot)) {
+                return false;
+            }
+
+            // The exact snapshot is already the durable world/inventory receipt. Making that receipt
+            // manual-only records stable owner+character intent without inventing an entity UUID.
+            exactSnapshot.putBoolean(KEY_MANUAL_SUMMON_REQUIRED, true);
+            this._despawnedCompanionData.put(characterName, exactSnapshot);
+            this._pendingManualDismissals.remove(characterName);
+            writeToNbt();
+            return true;
+        }
+
         Located located = this.resolveLoadedCompanion(companionUuid);
-        if (located == null) {
-            // Could not positively confirm the entity is loaded/present (merely unloaded, or genuinely gone).
-            // FAIL-OPEN: do NOT silently delete the canonical mapping — that would orphan a still-alive
-            // companion from the cleanup command's "canonical entry must exist" rail and make
-            // getActiveCompanions under-count it (letting the cap be exceeded once a fresh spawn is later
-            // triggered for the same name while the old entity is still alive somewhere). A stale mapping to a
-            // truly-gone entity self-corrects on the next spawn (which overwrites the UUID); a merely-unloaded
-            // companion keeps its correct mapping and is reunited by the ensureCompanionExists reload path.
-            return;
+        if (located == null && manualSummonRequired && requestedCharacter != null
+                && characterName.equals(requestedCharacter.name())
+                && stableCharacterId(requestedCharacter) != null) {
+            located = this.resolveViaLocationHint(companionUuid);
         }
+        if (located == null) {
+            // Persist the operator's intent without deleting an entity whose live receipt is merely
+            // unloaded. Automatic join restore is blocked while a bounded reload/cleanup attempt runs.
+            if (manualSummonRequired && requestedCharacter != null
+                    && characterName.equals(requestedCharacter.name())
+                    && stableCharacterId(requestedCharacter) != null) {
+                this.storeManualDismissBarrier(requestedCharacter, companionUuid);
+                this.queuePendingManualDismiss(requestedCharacter, companionUuid);
+            }
+            return false;
+        }
+
         AutomatoneEntity automatone = located.entity();
-        // Persist inventory to per-world file before we discard the entity, so re-summon can load it.
-        PersistentDataManager.saveInventoryNow(automatone);
-        // Detect an interrupted active task and notify player + model BEFORE the
-        // conversation queue is wiped by despwnCompanion (which would drop the InfoMessage).
+        if (!companionUuid.equals(automatone.getUUID())
+                || (requestedCharacter != null
+                        && !this.isExactStableIdentity(automatone, requestedCharacter))) {
+            if (manualSummonRequired && requestedCharacter != null) {
+                this.storeManualDismissBarrier(requestedCharacter, companionUuid);
+                this.queuePendingManualDismiss(requestedCharacter, companionUuid);
+            }
+            return false;
+        }
+
+        UUID inheritedManualBarrier = this.manualDismissBarrier(automatone.character);
+        boolean effectiveManualSummonRequired = manualSummonRequired
+                || companionUuid.equals(inheritedManualBarrier);
+        Character effectiveRequestedCharacter = requestedCharacter != null
+                ? requestedCharacter
+                : effectiveManualSummonRequired ? automatone.character : null;
+
+        PersistentDataManager.InventoryStateReceipt state =
+                PersistentDataManager.captureInventoryStateNow(automatone);
+        if (!state.ready() || state.state() == null) {
+            this._player.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.relocate_failed", automatone.character.shortName()));
+            if (effectiveManualSummonRequired && effectiveRequestedCharacter != null) {
+                this.storeManualDismissBarrier(effectiveRequestedCharacter, companionUuid);
+                this.queuePendingManualDismiss(effectiveRequestedCharacter, companionUuid);
+            }
+            return false;
+        }
+        boolean persisted = PersistentDataManager.saveInventoryNowWithReceipt(automatone);
+        boolean interruptedTask = this.hasActiveWork(automatone);
+        String lifecycleNote = effectiveManualSummonRequired
+                ? (interruptedTask
+                        ? OPERATOR_DISMISS_TASK_MODEL_NOTE : OPERATOR_DISMISS_MODEL_NOTE)
+                : (interruptedTask
+                        ? SESSION_UNLOAD_TASK_MODEL_NOTE : SESSION_UNLOAD_MODEL_NOTE);
+        if (!persisted) {
+            lifecycleNote += " The separate inventory backup could not be updated; restoration used"
+                    + " the exact dismissal snapshot.";
+            this._player.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.dismiss_persistence_degraded",
+                    automatone.character.shortName()));
+        }
+        CompoundTag savedState = PersistentDataManager.withLifecycleNote(
+                state.state(), lifecycleNote);
+        if (effectiveManualSummonRequired) {
+            savedState.putBoolean(KEY_MANUAL_SUMMON_REQUIRED, true);
+        }
+        this._despawnedCompanionData.put(characterName, savedState);
+
         if (automatone.controller != null) {
-            automatone.controller.stopWithRespawnNotification(this._player);
+            if (interruptedTask) {
+                this._player.sendSystemMessage(Component.translatable(
+                        "message.player2npc.companion.despawned_with_task",
+                        automatone.character.shortName()));
+            }
+            automatone.controller.stop();
             automatone.controller.unregisterFromGlobalRegistry();
         }
-        // Ensure no prompts are processed for a despawned companion.
         ConversationManager.despwnCompanion(automatone.getUUID());
-        CompoundTag savedState = new CompoundTag();
-        automatone.addAdditionalSaveData(savedState);
-        this._despawnedCompanionData.put(characterName, savedState);
-        // Only now remove the mapping — the entity was positively found. (The hint is cleared by
-        // AutomatoneEntity.remove()'s shouldDestroy chokepoint when discard() lands.)
-        this._companionMap.remove(characterName);
+        this._companionMap.remove(characterName, companionUuid);
         automatone.discard();
-        System.out.println("Dismissed companion: " + characterName + " for player " + this._player.getName().getString());
+        if (effectiveRequestedCharacter != null) {
+            this.clearManualDismissBarrier(effectiveRequestedCharacter, companionUuid);
+        }
+        this._pendingManualDismissals.remove(characterName);
+        System.out.println("Dismissed companion: " + characterName
+                + " for player " + this._player.getName().getString());
         writeToNbt();
+        return true;
     }
 
     public void dismissAllCompanions() {
@@ -409,7 +1335,7 @@ public class CompanionManager {
         // here would wipe those fail-open-preserved mappings, re-introducing the under-count / orphan the
         // revised dismissCompanion exists to prevent — so it is intentionally omitted.
         List<String> names = new ArrayList(this._companionMap.keySet());
-        names.forEach(this::dismissCompanion);
+        names.forEach(name -> this.dismissCompanion(name, false, null));
     }
 
     /** Removes companion map and despawned snapshot entries without spawning discard logic (used when purging storage). */
@@ -490,17 +1416,23 @@ public class CompanionManager {
             this.summonCompanions();
             this._needsToSummon = false;
         }
+        if (!this._pendingManualDismissals.isEmpty()) {
+            this.processPendingManualDismissals();
+        }
         if (!this._pendingReloads.isEmpty()) {
             this.processReloadRetries();
+        }
+        if (!this._pendingIdentityRescans.isEmpty()) {
+            this.processIdentityRescans();
         }
     }
 
     /**
      * Drives the deferred reunion for a hinted-but-unloaded companion whose async chunk+entity reload was
      * kicked off by {@link #ensureCompanionExists}. Each tick: if the entity has finished loading, relocate/TP
-     * it (never cloning); if the hint proves stale after {@link #MAX_RELOAD_RETRY_TICKS} ticks, clear it and
-     * spawn a genuine replacement; if the mapping was removed meanwhile, abandon the retry. This is what makes
-     * the location-hint mechanism actually correct given that entity deserialization is asynchronous.
+     * it; if the hint proves stale after {@link #MAX_RELOAD_RETRY_TICKS} ticks, clear it. Both terminal paths
+     * enter {@link #reconcileCompanion} so a loaded stable-identity candidate or exact snapshot can never be
+     * bypassed by a direct replacement spawn.
      */
     private void processReloadRetries() {
         List<String> done = new ArrayList();
@@ -516,35 +1448,156 @@ public class CompanionManager {
             Located located = this.resolveLoadedCompanion(uuid);
             if (located != null && located.entity().isAlive()) {
                 done.add(name);
-                this.teleportOrRelocate(pending.character, located);
-                writeToNbt();
+                ReconciliationOutcome outcome =
+                        this.reconcileCompanion(pending.character, uuid, located);
+                this.completeExplicitBarrierRestore(pending.character, outcome.canonical());
+                this.deliverPendingLifecycleNote(
+                        pending,
+                        outcome.canonical() != null ? outcome.canonical() : located.entity());
                 continue;
             }
             if (--pending.ticksLeft <= 0) {
-                // The hint never resolved to a loaded entity within the budget: treat it as stale, drop it,
-                // and spawn a genuine replacement (the cleanup command remains the backstop if the original
-                // somehow reappears loaded later).
                 done.add(name);
                 CompanionLocationTracker.clear(uuid);
-                LOGGER.info("processReloadRetries: hint stale for {}, spawning fresh", name);
-                try {
-                    spawnCompanion(pending.character);
-                } catch (Exception e) {
-                    // Replacement spawn failed — the companion is now absent with no signal. Surface it to
-                    // the owner (DESIGN.md §3 "visible degradation, never silent") rather than only printing a
-                    // trace; the console warn keeps the stack for diagnostics (never routed to a model/prompt
-                    // — data-egress rule).
-                    if (pending.character != null) {
-                        this._player.sendSystemMessage(Component.translatable(
-                                "message.player2npc.companion.relocate_failed", pending.character.shortName()));
-                    }
-                    LOGGER.warn("Failed to spawn replacement companion {} for {}",
-                            pending.character != null ? pending.character.name() : "?", this._player.getName().getString(), e);
-                }
-                writeToNbt();
+                LOGGER.info("processReloadRetries: hint stale for {}; reconciling live identity receipts", name);
+                ReconciliationOutcome outcome =
+                        this.reconcileCompanion(pending.character, uuid, null);
+                this.completeExplicitBarrierRestore(pending.character, outcome.canonical());
+                this.deliverPendingLifecycleNote(pending, outcome.canonical());
             }
         }
         done.forEach(this._pendingReloads::remove);
+    }
+
+    private void processPendingManualDismissals() {
+        List<String> done = new ArrayList<>();
+        for (Map.Entry<String, PendingManualDismiss> entry
+                : this._pendingManualDismissals.entrySet()) {
+            String name = entry.getKey();
+            PendingManualDismiss pending = entry.getValue();
+            UUID barrier = this.manualDismissBarrier(pending.character);
+            if (barrier == null) {
+                done.add(name);
+                continue;
+            }
+            if (!pending.forceLoadPhase && --pending.ticksLeft > 0) {
+                continue;
+            }
+            if (!pending.forceLoadPhase) {
+                pending.ticksLeft = PASSIVE_MANUAL_DISMISS_POLL_TICKS;
+            }
+            UUID currentMapped = this._companionMap.get(name);
+            UUID cleanupTarget = currentMapped != null ? currentMapped : pending.mappedUuid;
+            Located located = this.resolveLoadedCompanion(cleanupTarget);
+            if (located == null && pending.forceLoadPhase) {
+                located = this.resolveViaLocationHint(cleanupTarget);
+            }
+            if (located != null && located.entity().isAlive()
+                    && this.dismissCompanion(name, true, pending.character)) {
+                done.add(name);
+                continue;
+            }
+            if (pending.forceLoadPhase && --pending.ticksLeft <= 0) {
+                pending.forceLoadPhase = false;
+                pending.ticksLeft = PASSIVE_MANUAL_DISMISS_POLL_TICKS;
+                // Passive monitoring never force-loads. It cheaply catches a later natural chunk load
+                // while the sticky barrier continues blocking automatic restore.
+                LOGGER.info("Manual dismiss force-load phase ended; retaining passive monitor character={}",
+                        name);
+            }
+        }
+        done.forEach(this._pendingManualDismissals::remove);
+    }
+
+    private void completeExplicitBarrierRestore(
+            Character character, AutomatoneEntity canonical) {
+        if (character == null || character.name() == null || canonical == null
+                || !this._explicitBarrierRestorePending.remove(character.name())) {
+            return;
+        }
+        UUID barrier = this.manualDismissBarrier(character);
+        if (barrier != null) {
+            this.clearManualDismissBarrier(character, barrier);
+        }
+    }
+
+    private void deliverPendingLifecycleNote(PendingReload pending, AutomatoneEntity canonical) {
+        if (pending != null && pending.deferredLifecycleNote != null
+                && canonical != null && canonical.isAlive() && !canonical.isRemoved()
+                && canonical.controller != null) {
+            AiConversationFeedback.deferInfo(
+                    canonical.controller, pending.deferredLifecycleNote);
+        }
+    }
+
+    private void scheduleIdentityRescan(Character character) {
+        String characterId = stableCharacterId(character);
+        if (characterId == null) {
+            return;
+        }
+        // A successful reconciliation starts a fresh bounded observation window. Reusing an older,
+        // nearly-expired window could miss a clone whose chunk begins loading after this summon.
+        this._pendingIdentityRescans.put(
+                characterId,
+                new PendingIdentityRescan(
+                        character,
+                        IDENTITY_RESCAN_INTERVAL_TICKS,
+                        MAX_IDENTITY_RESCAN_ATTEMPTS));
+    }
+
+    private void processIdentityRescans() {
+        List<String> done = new ArrayList<>();
+        for (Map.Entry<String, PendingIdentityRescan> entry : this._pendingIdentityRescans.entrySet()) {
+            PendingIdentityRescan pending = entry.getValue();
+            if (--pending.ticksLeft > 0) {
+                continue;
+            }
+            this.cleanupDelayedIdentityExtras(pending.character);
+            if (--pending.attemptsLeft <= 0) {
+                done.add(entry.getKey());
+            } else {
+                pending.ticksLeft = IDENTITY_RESCAN_INTERVAL_TICKS;
+            }
+        }
+        done.forEach(this._pendingIdentityRescans::remove);
+    }
+
+    /**
+     * Cleanup-only delayed pass. It acts only when the currently mapped entity is loaded and itself
+     * validates against exact owner+character identity; otherwise it fails closed and spends no receipt.
+     */
+    private void cleanupDelayedIdentityExtras(Character character) {
+        if (character == null || character.name() == null) {
+            return;
+        }
+        UUID mappedUuid = this._companionMap.get(character.name());
+        Located mapped = this.resolveLoadedCompanion(mappedUuid);
+        if (mapped == null || !mapped.entity().isAlive() || mapped.entity().isRemoved()) {
+            return;
+        }
+        List<Located> exactMatches = this.resolveLoadedCompanionsByIdentity(character);
+        if (findLocated(exactMatches, mappedUuid) == null) {
+            return;
+        }
+        boolean cancelledDuplicateTask = false;
+        boolean changed = false;
+        for (Located match : exactMatches) {
+            AutomatoneEntity candidate = match.entity();
+            if (!mappedUuid.equals(candidate.getUUID()) && candidate.isAlive() && !candidate.isRemoved()) {
+                cancelledDuplicateTask |= this.discardLoadedIdentityOrphan(candidate);
+                changed = true;
+            }
+        }
+        if (changed) {
+            writeToNbt();
+        }
+        if (cancelledDuplicateTask) {
+            this.reportDuplicateTaskCancellation(
+                    character,
+                    mapped.entity().controller,
+                    "A duplicate companion instance loaded after identity recovery. Its unfinished task was"
+                            + " cancelled and the duplicate was removed.");
+        }
     }
 
     public void readFromNbt() {
@@ -585,6 +1638,99 @@ public class CompanionManager {
                 // Log the offending (bounded) NBT key so a corrupt hint is diagnosable; no unbounded strings.
                 LOGGER.warn("Skipping malformed persisted companion location hint for key {}", uuidKey);
             }
+        }
+        this.reconcileOfflineDeathTombstones();
+    }
+
+    /**
+     * Imports offline death receipts only when their dying UUID is still the owner's mapped
+     * authority. Non-matching tombstones remain untouched for diagnosis/recovery and can never
+     * overwrite a newer canonical companion.
+     */
+    private void reconcileOfflineDeathTombstones() {
+        MinecraftServer server = this._player.getServer();
+        if (server == null) {
+            return;
+        }
+        for (OfflineDeathTombstoneStorage.Tombstone tombstone
+                : OfflineDeathTombstoneStorage.loadForOwner(server, this._player.getUUID())) {
+            Character character = tombstone.character();
+            String characterName = tombstone.stableCharacterName();
+            String characterId = tombstone.stableCharacterId();
+            UUID dyingUuid = tombstone.dyingUuid();
+            CompoundTag tombstoneState = tombstone.state();
+            if (character == null || characterName == null || characterId == null
+                    || !characterName.equals(character.name())
+                    || !characterId.equals(stableCharacterId(character))
+                    || !PersistentDataManager.isFullStateForIdentity(
+                            tombstoneState, this._player.getUUID(), characterId)
+                    || !dyingUuid.equals(this._companionMap.get(characterName))) {
+                continue;
+            }
+            boolean exactManualDismissBarrier =
+                    dyingUuid.equals(this.manualDismissBarrier(character));
+
+            boolean banned = PermadeathBanStorage.isBanned(
+                    server, this._player.getUUID(), characterId);
+            PermadeathBanStorage.TerminalBanReceipt banReceipt = null;
+            if (tombstone.permadeathKill() && tombstone.botPermadeath()) {
+                banReceipt = PermadeathBanStorage.recordTerminalBan(
+                        server, this._player.getUUID(), characterId);
+                banned = banReceipt.terminalDenied();
+            }
+            ManualDismissBarrierPolicy.DeathDecision manualDismissDeath =
+                    ManualDismissBarrierPolicy.afterDeath(exactManualDismissBarrier, banned);
+
+            if (banned) {
+                this._companionMap.remove(characterName, dyingUuid);
+                this._despawnedCompanionData.remove(characterName);
+                this._pendingReloads.remove(characterName);
+                this._pendingIdentityRescans.remove(characterId);
+                for (Located exact : this.resolveLoadedCompanionsByIdentity(character)) {
+                    AutomatoneEntity duplicate = exact.entity();
+                    if (duplicate.isAlive() && !duplicate.isRemoved()) {
+                        this.discardLoadedIdentityOrphan(duplicate);
+                    }
+                }
+                writeToNbt();
+                OfflineDeathTombstoneStorage.delete(server, tombstone);
+                if (manualDismissDeath.clearBarrier()) {
+                    this.clearManualDismissBarrier(character, dyingUuid);
+                }
+                this._player.sendSystemMessage(Component.translatable(
+                        "message.player2npc.companion.died_permadeath", character.shortName()));
+                if (banReceipt != null && !banReceipt.persisted()) {
+                    this._player.sendSystemMessage(Component.translatable(
+                            "message.player2npc.companion.permadeath_persistence_degraded",
+                            character.shortName()));
+                }
+                continue;
+            }
+
+            CompoundTag snapshot = PersistentDataManager.withLifecycleNote(
+                    tombstoneState, tombstone.lifecycleModelNote());
+            snapshot.putBoolean(KEY_DEATH_RESTORE, true);
+            if (!tombstone.deathCause().isBlank()) {
+                snapshot.putString(KEY_DEATH_CAUSE, tombstone.deathCause());
+            }
+            snapshot.putUUID(KEY_TOMBSTONE_UUID, dyingUuid);
+            if (!tombstone.autoRespawn() || manualDismissDeath.requireManualRestore()) {
+                snapshot.putBoolean(KEY_MANUAL_SUMMON_REQUIRED, true);
+            }
+            this._despawnedCompanionData.put(characterName, snapshot);
+            this._companionMap.remove(characterName, dyingUuid);
+            this._pendingReloads.remove(characterName);
+            this._pendingIdentityRescans.remove(characterId);
+            writeToNbt();
+            this._player.sendSystemMessage(Component.translatable(
+                    manualDismissDeath.requireManualRestore()
+                            ? "message.player2npc.companion.died_dismiss_pending"
+                            : tombstone.autoRespawn()
+                            ? "message.player2npc.companion.died"
+                            : "message.player2npc.companion.died_no_respawn",
+                    character.shortName()));
+            // Non-terminal tombstones are consumed only after a future accepted world+state receipt
+            // and successful lifecycle-note transfer; executeReconciliation owns that exact receipt.
         }
     }
 

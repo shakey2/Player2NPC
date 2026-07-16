@@ -9,6 +9,8 @@ import com.goodbird.player2npc.companion.AutomatoneEntity;
 import com.goodbird.player2npc.companion.CompanionManager;
 import com.goodbird.player2npc.network.AutomatoneDespawnRequestPacket;
 import com.goodbird.player2npc.network.AutomatoneSpawnRequestPacket;
+import com.goodbird.player2npc.network.GuiSnapshotRequestPacket;
+import com.goodbird.player2npc.network.GuiUpdatePacket;
 import com.player2.playerengine.player2api.auth.AuthenticationManager;
 import com.goodbird.player2npc.companion.CharacterStorageCommands;
 import com.goodbird.player2npc.companion.ServerUsernameUuidCache;
@@ -30,7 +32,6 @@ import net.minecraft.world.entity.monster.Zombie;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.concurrent.CompletableFuture;
 
 public class Player2NPC {
     private static final Logger LOGGER = LogManager.getLogger();
@@ -39,6 +40,9 @@ public class Player2NPC {
     public static final ResourceLocation SPAWN_REQUEST_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "request_spawn_automatone");
     public static final ResourceLocation DESPAWN_REQUEST_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "request_despawn_automatone");
     public static final ResourceLocation EQUIP_SYNC_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "sync_automatone_equipment");
+    public static final ResourceLocation GUI_SNAPSHOT_REQUEST_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "gui_snapshot_request");
+    public static final ResourceLocation GUI_SNAPSHOT_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "gui_snapshot");
+    public static final ResourceLocation GUI_UPDATE_PACKET_ID = ResourceLocation.fromNamespaceAndPath("player2npc", "gui_update");
 
     public Player2NPC() {
     }
@@ -62,9 +66,12 @@ public class Player2NPC {
         if (Platform.getEnvironment() == Env.SERVER) {
             NetworkManager.registerS2CPayloadType(SPAWN_PACKET_ID);
             NetworkManager.registerS2CPayloadType(EQUIP_SYNC_PACKET_ID);
+            NetworkManager.registerS2CPayloadType(GUI_SNAPSHOT_PACKET_ID);
         }
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, SPAWN_REQUEST_PACKET_ID, AutomatoneSpawnRequestPacket::handle);
         NetworkManager.registerReceiver(NetworkManager.Side.C2S, DESPAWN_REQUEST_PACKET_ID, AutomatoneDespawnRequestPacket::handle);
+        NetworkManager.registerReceiver(NetworkManager.Side.C2S, GUI_SNAPSHOT_REQUEST_PACKET_ID, GuiSnapshotRequestPacket::handle);
+        NetworkManager.registerReceiver(NetworkManager.Side.C2S, GUI_UPDATE_PACKET_ID, GuiUpdatePacket::handle);
 
         CommandRegistrationEvent.EVENT.register((dispatcher, registry, environment) -> {
             CharacterStorageCommands.register(dispatcher);
@@ -74,9 +81,14 @@ public class Player2NPC {
             if (player.getServer() != null) {
                 ServerUsernameUuidCache.recordConnectedPlayer(player.getServer(), player);
             }
-            CompletableFuture
-                    .runAsync(() -> AuthenticationManager.getInstance().checkAuth(player, AutomatoneEntity.PLAYER2_GAME_ID))
-                    .thenRun(CompanionManager.get(player)::summonAllCompanionsAsync);
+            CompanionManager manager = CompanionManager.get(player);
+            manager.summonAllCompanionsAsync();
+            AuthenticationManager.getInstance()
+                    .checkAuthAsync(player, AutomatoneEntity.PLAYER2_GAME_ID)
+                    .exceptionally(error -> {
+                        LOGGER.warn("Player2NPC join auth refresh failed for {}", player.getName().getString(), error);
+                        return null;
+                    });
         });
 
         PlayerEvent.PLAYER_QUIT.register((player) -> {

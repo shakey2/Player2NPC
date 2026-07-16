@@ -21,7 +21,6 @@ import com.player2.playerengine.automaton.api.entity.LivingEntityInteractionMana
 import com.player2.playerengine.automaton.api.entity.LivingEntityInventory;
 import com.player2.playerengine.multiversion.equip.EquipVer;
 import com.player2.playerengine.multiversion.equip.WeaponVer;
-import com.player2.playerengine.player2api.AiConversationFeedback;
 import com.player2.playerengine.player2api.BotLifecycleSettings;
 import com.player2.playerengine.player2api.BotLifecycleSettingsResolver;
 import com.player2.playerengine.player2api.KeepInventoryResolver;
@@ -40,7 +39,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 
-import java.io.IOException;
 import java.util.UUID;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
@@ -77,10 +75,12 @@ public class AutomatoneEntity extends LivingEntity
      * Owner UUID cached in memory so it is available in {@link #die(DamageSource)} even when the owner
      * is offline ({@code controller.getOwner()} returns null then). Mirrors the {@code owner_uuid} NBT
      * tag; populated in {@link #init(Player)}, {@link #readAdditionalSaveData(CompoundTag)}, and
-     * {@link #reattachOwner(Player)}. Used only for the permadeath ban write (Non-negotiable #10);
-     * nothing new is persisted ({@code owner_uuid} already round-trips via NBT).
+     * {@link #reattachOwner(Player)}. It also supplies stable identity reconciliation while the owner
+     * is offline, so every save must retain it even when {@code controller.getOwner()} is null.
      */
     private UUID ownerUuid;
+    /** True only while the exact online mapped canonical is inside vanilla death-loot handling. */
+    private boolean canonicalDeathDropAuthorized;
     /**
      * Persisted follow mode (WS2). Parsed in {@link #readAdditionalSaveData(CompoundTag)} and applied to the
      * controller on whichever path builds it: the read-path construction (cold load) applies it immediately,
@@ -109,6 +109,14 @@ public class AutomatoneEntity extends LivingEntity
      * @param deathCause     vanilla localized death message, only used for {@link SpawnReason#DEATH_RESPAWN}.
      */
     public void init(Player companionOwner, SpawnReason reason, String deathCause) {
+        init(companionOwner, reason, deathCause, false);
+    }
+
+    private void init(
+            Player companionOwner,
+            SpawnReason reason,
+            String deathCause,
+            boolean inventoryStateManagedExternally) {
         // this.setMaxUpStep(0.6F);
         this.setSpeed(0.4F);
         this.manager = new LivingEntityInteractionManager(this);
@@ -116,9 +124,8 @@ public class AutomatoneEntity extends LivingEntity
         this.hungerManager = new LivingEntityHungerManager();
         if (!this.level().isClientSide && this.character != null) {
             this.controller = new PlayerEngineController((IBaritone) IBaritone.KEY.get(this), this.character,
-                    "player2-ai-npc-minecraft");
+                    "player2-ai-npc-minecraft", companionOwner);
             if (companionOwner != null) {
-                this.controller.setOwner(companionOwner);
                 this.ownerUuid = companionOwner.getUUID();
             }
             // Single greeting decision point (Q5 option (a)): FIRST_MEETING and RETURNING are handled
@@ -126,6 +133,8 @@ public class AutomatoneEntity extends LivingEntity
             // per-world history file does not yet exist (true first meeting), else emits "<owner> has
             // respawned you". (No call site passes FIRST_MEETING today; see SpawnReason javadoc.)
             // DEATH_RESPAWN injects the death cause so the revived bot answers truthfully (DESIGN.md §3).
+            if (!inventoryStateManagedExternally) {
+                PersistentDataManager.loadInventory(this);
             switch (reason) {
                 case FIRST_MEETING:
                 case RETURNING:
@@ -141,8 +150,7 @@ public class AutomatoneEntity extends LivingEntity
                     // walking through a portal would spam "<owner> has respawned you" every time.
                     break;
             }
-            PersistentDataManager.loadInventory(this);
-            this.controller.setFollowMode(this.pendingFollowMode);
+            }
         }
 
     }
@@ -161,14 +169,50 @@ public class AutomatoneEntity extends LivingEntity
         return "Your owner";
     }
 
+    /** Called by CompanionManager only after synchronous state application and accepted world spawn. */
+    void finishManagedSpawnInitialization(
+            SpawnReason reason, String deathCause, Player companionOwner) {
+        this.dispatchSpawnLifecycleMessage(reason, deathCause, companionOwner);
+    }
+
+    private void dispatchSpawnLifecycleMessage(
+            SpawnReason reason, String deathCause, Player companionOwner) {
+        if (this.controller == null || this.character == null || reason == null) {
+            return;
+        }
+        switch (reason) {
+            case FIRST_MEETING:
+            case RETURNING:
+                ConversationManager.sendReturnMessage(
+                        this.controller, this.character, ownerDisplayName(companionOwner));
+                break;
+            case DEATH_RESPAWN:
+                ConversationManager.sendDeathRevival(
+                        this.controller, this.character, deathCause);
+                break;
+            case DIMENSION_RELOCATE:
+                break;
+        }
+    }
+
     public AutomatoneEntity(Level world, Character character, Player owner) {
         this(world, character, owner, SpawnReason.RETURNING, null);
     }
 
     public AutomatoneEntity(Level world, Character character, Player owner, SpawnReason reason, String deathCause) {
+        this(world, character, owner, reason, deathCause, false);
+    }
+
+    AutomatoneEntity(
+            Level world,
+            Character character,
+            Player owner,
+            SpawnReason reason,
+            String deathCause,
+            boolean inventoryStateManagedExternally) {
         super(Player2NPC.AUTOMATONE.get(), world);
         this.setCharacter(character);
-        this.init(owner, reason, deathCause);
+        this.init(owner, reason, deathCause, inventoryStateManagedExternally);
     }
 
     public LivingEntityInventory getLivingInventory() {
@@ -258,8 +302,15 @@ public class AutomatoneEntity extends LivingEntity
             }
         }
 
-        if (this.controller != null && this.controller.getOwner() != null) {
-            tag.putUUID("owner_uuid", this.controller.getOwner().getUUID());
+        UUID attachedOwnerUuid = this.controller != null && this.controller.getOwner() != null
+                ? this.controller.getOwner().getUUID()
+                : null;
+        UUID ownerToPersist = ownerUuidForSave(this.ownerUuid, attachedOwnerUuid);
+        if (attachedOwnerUuid != null) {
+            this.ownerUuid = attachedOwnerUuid;
+        }
+        if (ownerToPersist != null) {
+            tag.putUUID("owner_uuid", ownerToPersist);
         }
     }
 
@@ -443,6 +494,10 @@ public class AutomatoneEntity extends LivingEntity
 
     @Override
     protected void dropAllDeathLoot(ServerLevel serverLevel, DamageSource damageSource) {
+        if (!this.canonicalDeathDropAuthorized) {
+            // Offline authority is ambiguous and historical duplicates are never allowed to clone-drop.
+            return;
+        }
         boolean keep = KeepInventoryResolver.effectiveKeep(
                 level().getGameRules().getBoolean(GameRules.RULE_KEEPINVENTORY));
         if (keep) {
@@ -456,98 +511,206 @@ public class AutomatoneEntity extends LivingEntity
 
     @Override
     public void die(DamageSource damageSource) {
-        super.die(damageSource);
-        if (!level().isClientSide()) {
-            PersistentDataManager.saveInventory(this);
+        Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
+        ServerPlayer onlineOwner = ownerPlayer instanceof ServerPlayer
+                ? (ServerPlayer) ownerPlayer : null;
+        if (onlineOwner != null && (onlineOwner.getServer() == null
+                || onlineOwner.getServer().getPlayerList().getPlayer(onlineOwner.getUUID()) != onlineOwner)) {
+            onlineOwner = null;
+        }
+        CompanionManager ownerManager = onlineOwner == null
+                ? null : CompanionManager.get(onlineOwner);
+        boolean interruptedTask = ownerManager != null
+                ? ownerManager.hasActiveWorkForLifecycle(this)
+                : this.controller != null && this.controller.hasActiveNonIdleUserTask();
+        this.canonicalDeathDropAuthorized = ownerManager != null
+                && ownerManager.isMappedDeathAuthority(this);
+        try {
+            super.die(damageSource);
+        } finally {
+            this.canonicalDeathDropAuthorized = false;
+        }
+        if (level().isClientSide()) {
+            return;
+        }
 
-            // (1) Resolve the owner UUID and server handle FIRST, unconditionally — a kill is a kill
-            // even when the owner is offline (controller.getOwner() is null then), so the permadeath
-            // ban must not depend on owner presence (Non-negotiable #10).
-            UUID resolvedOwnerUuid = this.controller != null && this.controller.getOwner() != null
-                    ? this.controller.getOwner().getUUID()
-                    : this.ownerUuid;
-            MinecraftServer server = this.level().getServer();
+        UUID resolvedOwnerUuid = onlineOwner != null ? onlineOwner.getUUID() : this.ownerUuid;
+        MinecraftServer server = this.level().getServer();
+        String deathCause = boundedSingleLine(
+                damageSource.getLocalizedDeathMessage(this).getString(), 256);
+        if (server == null || resolvedOwnerUuid == null || this.character == null
+                || this.character.id() == null || this.character.id().isBlank()) {
+            LOGGER.warn("Bot death could not be reconciled (ownerUuid={}, server={}, characterPresent={})",
+                    resolvedOwnerUuid, server != null, this.character != null);
+            stopDeadController();
+            return;
+        }
 
-            // (2) Permadeath ban write — OUTSIDE the online-owner block so it runs offline too.
-            // Load per-player settings + resolve the effective lifecycle config through the single
-            // resolver (Non-negotiable #5). Default to ON auto-respawn / no permadeath if we cannot
-            // resolve an owner/server (degrade visibly via log, never crash).
-            boolean autoRespawn = true;
-            boolean bannedThisDeath = false;
-            if (server != null && resolvedOwnerUuid != null) {
-                OwnerUserSettingsStorage.Snapshot perPlayer =
-                        OwnerUserSettingsStorage.load(server, resolvedOwnerUuid);
-                BotLifecycleSettings effective = BotLifecycleSettingsResolver.resolve(
-                        server, resolvedOwnerUuid, perPlayer.autoRespawn(), perPlayer.botPermadeath());
-                autoRespawn = effective.autoRespawn();
-                String charId = this.character != null ? this.character.id() : null;
-                if (isPermadeathKill(damageSource) && effective.botPermadeath()
-                        && charId != null && !charId.isBlank()) {
-                    try {
-                        PermadeathBanStorage.addBan(server, resolvedOwnerUuid, charId);
-                        bannedThisDeath = true;
-                    } catch (IOException e) {
-                        LOGGER.warn("Failed to write permadeath ban for owner {} character {}",
-                                resolvedOwnerUuid, charId, e);
-                    }
+        OwnerUserSettingsStorage.Snapshot perPlayer =
+                OwnerUserSettingsStorage.load(server, resolvedOwnerUuid);
+        BotLifecycleSettings effective = BotLifecycleSettingsResolver.resolve(
+                server, resolvedOwnerUuid, perPlayer.autoRespawn(), perPlayer.botPermadeath());
+        boolean lethalDeath = isPermadeathKill(damageSource);
+        boolean permadeathKill = lethalDeath && effective.botPermadeath();
+
+        // An offline death cannot safely mutate the owner's persisted companion map. Preserve a
+        // per-dying-UUID receipt and let CompanionManager validate it against that map on owner load.
+        if (ownerManager == null) {
+            PersistentDataManager.InventoryStateReceipt state =
+                    PersistentDataManager.captureInventoryStateNow(this);
+            if (state.ready() && state.state() != null) {
+                String lifecycleNote = deathLifecycleNote(
+                        effective.autoRespawn(), permadeathKill, interruptedTask);
+                boolean saved = OfflineDeathTombstoneStorage.save(
+                        server,
+                        new OfflineDeathTombstoneStorage.Tombstone(
+                                resolvedOwnerUuid,
+                                this.character,
+                                this.character.id(),
+                                this.character.name(),
+                                this.getUUID(),
+                                state.state(),
+                                effective.autoRespawn(),
+                                effective.botPermadeath(),
+                                lethalDeath,
+                                lifecycleNote,
+                                deathCause));
+                if (!saved) {
+                    LOGGER.warn("Offline death tombstone could not be persisted owner={} characterId={}",
+                            resolvedOwnerUuid, this.character.id());
                 }
             } else {
-                LOGGER.warn("Bot died with no resolvable owner/server (ownerUuid={}, server={}); "
-                        + "skipping ban + respawn", resolvedOwnerUuid, server);
+                LOGGER.warn("Offline companion death state was unavailable owner={} characterId={}",
+                        resolvedOwnerUuid, this.character.id());
             }
+            stopDeadController();
+            return;
+        }
 
-            // Resolve the live owner so an interrupted task can be reported to the player + model
-            // BEFORE despwnCompanion wipes the conversation queue.
-            Player ownerPlayer = this.controller != null ? this.controller.getOwner() : null;
-            boolean banned = bannedThisDeath
-                    || (server != null && resolvedOwnerUuid != null && this.character != null
-                            && this.character.id() != null && !this.character.id().isBlank()
-                            && PermadeathBanStorage.isBanned(server, resolvedOwnerUuid, this.character.id()));
+        // Vanilla death has already applied keepInventory/drop semantics. Only the exact UUID still
+        // mapped for this stable owner+character identity may spend that post-death receipt.
+        CompanionManager.DeathStateReceipt deathState = ownerManager.capturePostDeathState(this);
+        if (!deathState.mappedAuthority()) {
+            ownerManager.reconcileTerminalDeath(
+                    this, this.character, deathState, false, "", deathCause);
+            stopDeadController();
+            return;
+        }
 
-            // (4) Dual-audience model feedback (DESIGN.md §3) — enqueue BEFORE despwnCompanion wipes
-            // the queue, so the model does not assume it respawned. Player chat is sent in (3).
-            if (this.controller != null) {
-                if (banned) {
-                    AiConversationFeedback.enqueueInfo(this.controller,
-                            "You died permanently (hardcore permadeath) and cannot be summoned again in this world."
-                                    + " Do not claim you respawned.");
-                } else if (!autoRespawn) {
-                    AiConversationFeedback.enqueueInfo(this.controller,
-                            "You died and auto-respawn is disabled, so you were not respawned. The owner must summon you."
-                                    + " Do not claim you respawned.");
-                }
-                this.controller.stopWithRespawnNotification(
-                        ownerPlayer instanceof ServerPlayer ownerSp0 ? ownerSp0 : null);
-                this.controller.unregisterFromGlobalRegistry();
+        boolean banned = PermadeathBanStorage.isBanned(
+                server, resolvedOwnerUuid, this.character.id());
+        PermadeathBanStorage.TerminalBanReceipt banReceipt = null;
+        if (permadeathKill) {
+            banReceipt = PermadeathBanStorage.recordTerminalBan(
+                    server, resolvedOwnerUuid, this.character.id());
+            banned = banReceipt.terminalDenied();
+        }
+        boolean manualDismissPending = ownerManager.hasManualDismissIntent(this.character);
+        ManualDismissBarrierPolicy.DeathDecision manualDismissDeath =
+                ManualDismissBarrierPolicy.afterDeath(manualDismissPending, banned);
+
+        stopDeadController();
+        ServerPlayer ownerSp = onlineOwner;
+        if (interruptedTask) {
+            ownerSp.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.despawned_with_task",
+                    this.character.shortName()));
+        }
+        if (banned) {
+            ownerManager.reconcileTerminalDeath(
+                    this,
+                    this.character,
+                    deathState,
+                    false,
+                    deathLifecycleNote(false, true, interruptedTask),
+                    deathCause);
+            ownerSp.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.died_permadeath", this.character.shortName()));
+            if (banReceipt != null && !banReceipt.persisted()) {
+                ownerSp.sendSystemMessage(Component.translatable(
+                        "message.player2npc.companion.permadeath_persistence_degraded",
+                        this.character.shortName()));
             }
-            ConversationManager.despwnCompanion(this.getUUID());
-
-            // (3) Player-facing messaging + respawn — requires an online owner. Choose EXACTLY ONE
-            // exclusive branch, banned-first short-circuit.
-            if (ownerPlayer instanceof ServerPlayer ownerSp && this.character != null) {
-                if (banned) {
-                    // (a) banned: died permanently, no respawn, NO "use summon" line (it could never work).
-                    ownerSp.sendSystemMessage(Component.translatable(
-                            "message.player2npc.companion.died_permadeath", this.character.shortName()));
-                } else if (!autoRespawn) {
-                    // (b) auto-respawn OFF: no respawn; tell the player to summon it back.
-                    ownerSp.sendSystemMessage(Component.translatable(
-                            "message.player2npc.companion.died_no_respawn", this.character.shortName()));
-                } else {
-                    // (c) auto-respawn ON: existing behavior + death context for the model.
-                    ownerSp.sendSystemMessage(Component.translatable(
-                            "message.player2npc.companion.died", this.character.shortName()));
+        } else if (manualDismissDeath.requireManualRestore()) {
+            ownerManager.reconcileTerminalDeath(
+                    this,
+                    this.character,
+                    deathState,
+                    true,
+                    pendingDismissDeathLifecycleNote(interruptedTask),
+                    deathCause);
+            ownerSp.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.died_dismiss_pending",
+                    this.character.shortName()));
+        } else if (!effective.autoRespawn()) {
+            ownerManager.reconcileTerminalDeath(
+                    this,
+                    this.character,
+                    deathState,
+                    true,
+                    deathLifecycleNote(false, false, interruptedTask),
+                    deathCause);
+            ownerSp.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.died_no_respawn", this.character.shortName()));
+        } else {
+            ownerSp.sendSystemMessage(Component.translatable(
+                    "message.player2npc.companion.died", this.character.shortName()));
+            try {
+                CompanionManager.DeathRespawnResult result = ownerManager.reconcileAfterDeath(
+                        this, this.character, deathCause, deathState, interruptedTask);
+                if (result.spawnedReplacement()) {
                     ownerSp.sendSystemMessage(Component.translatable(
                             "message.player2npc.companion.respawned_near"));
-                    // Pass DEATH_RESPAWN + vanilla death cause so init() on the new entity injects the
-                    // death context into its fresh queue (the dying entity's queue was wiped by
-                    // despwnCompanion above). Do not reorder the spawnCompanion internals
-                    // (CompanionManager L163-166); the enqueue happens inside init().
-                    String deathCause = damageSource.getLocalizedDeathMessage(this).getString();
-                    CompanionManager.get(ownerSp).spawnCompanion(this.character, SpawnReason.DEATH_RESPAWN, deathCause);
                 }
+            } catch (RuntimeException spawnFailure) {
+                ownerSp.sendSystemMessage(Component.translatable(
+                        "message.player2npc.companion.relocate_failed", this.character.shortName()));
+                LOGGER.warn("Failed to respawn companion after death for owner={} characterId={}",
+                        ownerSp.getUUID(), this.character.id(), spawnFailure);
             }
         }
+    }
+
+    private void stopDeadController() {
+        if (this.controller != null) {
+            this.controller.stop();
+            this.controller.unregisterFromGlobalRegistry();
+        }
+        ConversationManager.despwnCompanion(this.getUUID());
+    }
+
+    private static String deathLifecycleNote(
+            boolean autoRespawn, boolean permadeath, boolean interruptedTask) {
+        if (permadeath) {
+            return "You died permanently and cannot be summoned again in this world. Do not claim you respawned."
+                    + (interruptedTask
+                            ? " Your interrupted task was cancelled and did not complete." : "");
+        }
+        if (!autoRespawn) {
+            return "You died while auto-respawn was disabled. You remained despawned until your owner"
+                    + " explicitly summoned you."
+                    + (interruptedTask
+                            ? " Your interrupted task was cancelled and did not complete." : "");
+        }
+        return "You died while your owner was offline. Your post-death state was preserved for recovery."
+                + (interruptedTask
+                        ? " Your interrupted task was cancelled and did not complete." : "");
+    }
+
+    private static String pendingDismissDeathLifecycleNote(boolean interruptedTask) {
+        return "You died while your owner's dismissal request was pending. You remained dismissed until"
+                + " explicitly summoned."
+                + (interruptedTask
+                        ? " Your interrupted task was cancelled and did not complete." : "");
+    }
+
+    private static String boundedSingleLine(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        String singleLine = value.replace('\r', ' ').replace('\n', ' ').trim();
+        return singleLine.length() <= maxLength
+                ? singleLine : singleLine.substring(0, maxLength);
     }
 
     /**
@@ -571,7 +734,7 @@ public class AutomatoneEntity extends LivingEntity
         if (reason.shouldDestroy()) {
             CompanionLocationTracker.clear(this.getUUID());
         }
-        // On death, die() has already run the full cleanup (saveInventory +
+        // On death, die() has already run the full cleanup (canonical-gated post-death state receipt +
         // stopWithRespawnNotification + unregisterFromGlobalRegistry + despwnCompanion).
         // MC 1.21.1 LivingEntity.die() does not remove immediately; the entity lingers for
         // deathTime ticks, then the tick loop calls remove(RemovalReason.KILLED). Re-running
@@ -582,7 +745,14 @@ public class AutomatoneEntity extends LivingEntity
             return;
         }
         if (!this.level().isClientSide) {
-            PersistentDataManager.saveInventory(this);
+            // Every Player2NPC preservation discard (normal dismiss and cross-dimension relocate)
+            // saves synchronously before calling discard(). A generic async save here for DISCARDED
+            // makes clone cleanup and character-data deletion write an orphan's inventory back over
+            // the owner+character canonical file they are intentionally removing. Keep chunk-unload
+            // persistence, but never persist a terminal explicit discard implicitly.
+            if (shouldPersistInventoryForRemoval(reason)) {
+                PersistentDataManager.saveInventory(this);
+            }
             if (this.controller != null) {
                 Player ownerPlayer = this.controller.getOwner();
                 this.controller.stopWithRespawnNotification(
@@ -592,5 +762,16 @@ public class AutomatoneEntity extends LivingEntity
             ConversationManager.despwnCompanion(this.getUUID());
         }
         super.remove(reason);
+    }
+
+    static boolean shouldPersistInventoryForRemoval(RemovalReason reason) {
+        return CompanionIdentityReconciliationPolicy.shouldPersistInventoryForRemoval(
+                reason == RemovalReason.KILLED,
+                reason == RemovalReason.DISCARDED);
+    }
+
+    static UUID ownerUuidForSave(UUID cachedOwnerUuid, UUID attachedOwnerUuid) {
+        return CompanionIdentityReconciliationPolicy.ownerUuidForStorage(
+                attachedOwnerUuid, cachedOwnerUuid);
     }
 }
