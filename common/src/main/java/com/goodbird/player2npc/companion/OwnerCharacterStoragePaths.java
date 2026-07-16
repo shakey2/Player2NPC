@@ -89,11 +89,10 @@ public final class OwnerCharacterStoragePaths {
     }
 
     public static UUID ownerUuidOrNull(AutomatoneEntity entity) {
-        if (entity.controller == null) {
-            return null;
-        }
-        Player owner = entity.controller.getOwner();
-        return owner == null ? null : owner.getUUID();
+        Player owner = entity.controller == null ? null : entity.controller.getOwner();
+        UUID attachedOwnerUuid = owner == null ? null : owner.getUUID();
+        return CompanionIdentityReconciliationPolicy.ownerUuidForStorage(
+                attachedOwnerUuid, entity.getOwnerUuid());
     }
 
     public static Path worldRootFromEntity(AutomatoneEntity entity) {

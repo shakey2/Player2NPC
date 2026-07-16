@@ -36,6 +36,7 @@ public class AutomatoneDespawnRequestPacket {
 
     public static void handle(FriendlyByteBuf var4, NetworkManager.PacketContext var5) {
         AutomatoneDespawnRequestPacket packet = new AutomatoneDespawnRequestPacket(var4);
-        var5.queue(() -> (CompanionManager.get((ServerPlayer) var5.getPlayer())).dismissCompanion(packet.character.name()));
+        var5.queue(() -> (CompanionManager.get((ServerPlayer) var5.getPlayer()))
+                .dismissCompanion(packet.character));
     }
 }

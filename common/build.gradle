@@ -11,3 +11,54 @@ dependencies {
     // Architectury API. This is optional, and you can comment it out if you don't need it.
     modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
 }
+
+tasks.register('farmingSettingsUiSelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.gui.settings.FarmingSettingsUiSelfTest'
+    enableAssertions = true
+}
+
+tasks.register('companionIdentityReconciliationPolicySelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.CompanionIdentityReconciliationPolicySelfTest'
+    enableAssertions = true
+}
+
+tasks.register('companionLifecycleReceiptPolicySelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.CompanionLifecycleReceiptPolicySelfTest'
+    enableAssertions = true
+}
+
+tasks.register('offlineDeathTombstoneStorageSelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.OfflineDeathTombstoneStorageSelfTest'
+    enableAssertions = true
+}
+
+tasks.register('permadeathBanStorageSelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.PermadeathBanStorageSelfTest'
+    enableAssertions = true
+}
+
+tasks.register('persistentDataManagerStateValidationSelfTest', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.goodbird.player2npc.companion.PersistentDataManagerStateValidationSelfTest'
+    enableAssertions = true
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('farmingSettingsUiSelfTest')
+    dependsOn tasks.named('companionIdentityReconciliationPolicySelfTest')
+    dependsOn tasks.named('companionLifecycleReceiptPolicySelfTest')
+    dependsOn tasks.named('offlineDeathTombstoneStorageSelfTest')
+    dependsOn tasks.named('permadeathBanStorageSelfTest')
+    dependsOn tasks.named('persistentDataManagerStateValidationSelfTest')
+}
